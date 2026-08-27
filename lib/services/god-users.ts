@@ -28,6 +28,19 @@ export async function addGodUser(email: string): Promise<GodUserRow> {
     .maybeSingle();
   if (existing) throw new HttpError(409, "User is already a god user");
 
+  // Guard: tenant owners cannot be god-users
+  const { data: tenantOwner } = await supabaseAdmin()
+    .from("tenants")
+    .select("id, name")
+    .eq("owner_email", normalized)
+    .maybeSingle();
+  if (tenantOwner) {
+    throw new HttpError(
+      400,
+      `This email is already the owner of a tenant — tenant owners cannot be god-users`,
+    );
+  }
+
   const { data, error } = await supabaseAdmin()
     .from("god_users")
     .insert({ email: normalized })
@@ -36,6 +49,7 @@ export async function addGodUser(email: string): Promise<GodUserRow> {
   if (error) throw error;
   return data as GodUserRow;
 }
+
 
 export async function removeGodUser(id: string): Promise<void> {
   const { error } = await supabaseAdmin().from("god_users").delete().eq("id", id);

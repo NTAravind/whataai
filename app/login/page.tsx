@@ -45,7 +45,12 @@ export default function LoginPage() {
   async function handleMagicLink() {
     setBusy(true);
     try {
-      const { error } = await getSupabaseBrowser().auth.signInWithOtp({ email });
+      const { error } = await getSupabaseBrowser().auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+        },
+      });
       if (error) throw error;
       toast.success("Magic link sent — check your inbox.");
     } catch (err) {

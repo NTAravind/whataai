@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/lib/clients/supabase";
 export interface MeResponse {
   user: { id: string; email: string | null } | null;
   isGod: boolean;
-  tenants: { id: string; name: string; status: string }[];
+  tenants: { id: string; name: string; status: string; currency: string }[];
   roles: Record<string, string>;
 }
 
@@ -26,14 +26,14 @@ export async function GET() {
       .eq("user_id", user.id);
 
     const memberTenantIds = (members ?? []).map((m: { tenant_id: string }) => m.tenant_id);
-    let tenants: { id: string; name: string; status: string }[] = [];
+    let tenants: { id: string; name: string; status: string; currency: string }[] = [];
     if (memberTenantIds.length > 0) {
       const { data } = await admin
         .from("tenants")
-        .select("id, name, status")
+        .select("id, name, status, currency")
         .in("id", memberTenantIds)
         .order("name");
-      tenants = (data ?? []) as { id: string; name: string; status: string }[];
+      tenants = (data ?? []) as { id: string; name: string; status: string; currency: string }[];
     }
 
     return ok<MeResponse>({

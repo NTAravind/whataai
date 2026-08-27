@@ -1,5 +1,5 @@
 -- ============================================================================
--- 002_inngest_durability.sql
+-- 002_support-whatsapp-flows.sql
 -- Additive migration on top of the base WA Agent Platform schema.
 -- Adds: outbound delivery status tracking, WhatsApp Flow session state,
 -- campaign schedules (mirrors Meta's /schedules API), and the idempotency

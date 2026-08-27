@@ -6,7 +6,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 
 interface TenantContextValue {
   tenantId: string | null;
-  tenant: { id: string; name: string; status: string } | null;
+  tenant: { id: string; name: string; status: string; currency: string } | null;
   setTenantId: (id: string) => void;
 }
 

@@ -35,11 +35,16 @@ const TOOL_LABELS: Record<string, string> = {
   search_knowledge_base: "Search knowledge base",
   check_availability: "Check availability",
   create_booking: "Create booking",
+  cancel_booking: "Cancel booking",
+  list_resources: "List resources",
+  schedule_reminder: "Schedule reminder",
   escalate_to_human: "Escalate to human",
   list_templates: "List templates",
   send_template: "Send template",
+  create_template: "Create template",
   list_flows: "List flows",
   trigger_flow: "Trigger flow",
+  get_current_datetime: "Get current date/time",
 };
 
 const AGENT_TOOL_NAMES = Object.keys(TOOL_LABELS);
@@ -76,8 +81,6 @@ export default function AgentEditorPage() {
   if (loading) return <LoadingState rows={6} />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
   if (!data) return null;
-
-  const agent = data.agent;
 
   function toggleTool(tool: string) {
     setTools((prev) => {

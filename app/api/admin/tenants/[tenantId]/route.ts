@@ -18,12 +18,17 @@ export async function PATCH(request: Request, { params }: Ctx) {
   try {
     await requireGodUser();
     const { tenantId } = await params;
-    const body = (await request.json()) as { name?: string; status?: string };
+    const body = (await request.json()) as {
+      name?: string;
+      status?: string;
+      max_businesses?: number | null;
+    };
     return ok({ tenant: await updateTenant(tenantId, body) });
   } catch (e) {
     return handleError(e);
   }
 }
+
 
 export async function DELETE(_request: Request, { params }: Ctx) {
   try {

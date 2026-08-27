@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, Boxes, CreditCard, UserPlus, Shield } from "lucide-react";
+import { Boxes, Building2, CreditCard, UserPlus } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

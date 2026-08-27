@@ -10,6 +10,9 @@ export async function POST(request: Request) {
   if (!body || typeof body.tenantId !== "string" || typeof body.templateId !== "string") {
     return NextResponse.json({ error: "tenantId and templateId are required" }, { status: 400 });
   }
+  if (!body.tenantId || !body.templateId) {
+    return NextResponse.json({ error: "tenantId and templateId must not be empty" }, { status: 400 });
+  }
 
   try {
     await deleteTemplate(body.templateId, body.tenantId);

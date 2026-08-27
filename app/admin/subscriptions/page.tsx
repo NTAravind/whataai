@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Ban, CreditCard, Plus, Trash2 } from "lucide-react";
+import { Ban, Plus, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api/client";
 import { PageHeader } from "@/components/page-header";

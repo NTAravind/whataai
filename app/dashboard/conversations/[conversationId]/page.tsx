@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeft, SendHorizonal } from "lucide-react";
+import { ArrowLeft, MailPlus, SendHorizonal } from "lucide-react";
 import { useTenant } from "@/components/providers/tenant-provider";
 import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api/client";
@@ -12,6 +12,22 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ErrorState, LoadingState } from "@/components/data-state";
 import { formatDateTime } from "@/lib/format";
-import type { ConversationSummary, MessageRow } from "@/lib/api/types";
+import type { ConversationSummary, MessageRow, TemplateRow } from "@/lib/api/types";
 
 function Bubble({ message }: { message: MessageRow }) {
   const isUser = message.role === "user";
@@ -56,7 +72,6 @@ function Bubble({ message }: { message: MessageRow }) {
 
 export default function ConversationThreadPage() {
   const params = useParams<{ conversationId: string }>();
-  const router = useRouter();
   const { tenantId } = useTenant();
   const conversationId = params.conversationId;
 
@@ -65,9 +80,16 @@ export default function ConversationThreadPage() {
     conversation: ConversationSummary;
     messages: MessageRow[];
   }>(base);
+  const templates = useApi<{ templates: TemplateRow[] }>(
+    tenantId ? `/api/tenants/${tenantId}/templates` : null,
+  );
 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateId, setTemplateId] = useState("");
+  const [templateParams, setTemplateParams] = useState("{}");
+  const [sendingTemplate, setSendingTemplate] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -111,6 +133,51 @@ export default function ConversationThreadPage() {
     }
   }
 
+  const approvedTemplates = (templates.data?.templates ?? []).filter(
+    (template) =>
+      template.status.toLowerCase() === "approved" &&
+      (!conversation.wa_account_id || template.wa_account_id === conversation.wa_account_id),
+  );
+  const selectedTemplateId = templateId || approvedTemplates[0]?.id || "";
+  const canSendTemplate =
+    conversation.channel === "whatsapp" &&
+    Boolean(conversation.wa_account_id) &&
+    Boolean(conversation.contact?.phone_number);
+
+  async function sendTemplate() {
+    if (!tenantId || !conversation.wa_account_id || !conversation.contact?.phone_number || !selectedTemplateId) return;
+    setSendingTemplate(true);
+    try {
+      let params: Record<string, unknown> = {};
+      if (templateParams.trim()) {
+        const parsed = JSON.parse(templateParams);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("Params must be a JSON object");
+        }
+        params = parsed as Record<string, unknown>;
+      }
+      await api("/api/whatsapp/message/send-template", {
+        method: "POST",
+        body: JSON.stringify({
+          tenantId,
+          waAccountId: conversation.wa_account_id,
+          conversationId,
+          to: conversation.contact.phone_number,
+          templateId: selectedTemplateId,
+          params,
+        }),
+      });
+      toast.success("Template queued");
+      setTemplateOpen(false);
+      setTemplateParams("{}");
+      reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send template");
+    } finally {
+      setSendingTemplate(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex h-[calc(100dvh-2rem)] max-w-4xl flex-col p-4 sm:p-6">
       <div className="flex items-center justify-between gap-3">
@@ -131,6 +198,17 @@ export default function ConversationThreadPage() {
           <Badge variant={conversation.status === "active" ? "default" : "secondary"}>
             {conversation.status}
           </Badge>
+          {canSendTemplate ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTemplateOpen(true)}
+              disabled={templates.loading || approvedTemplates.length === 0}
+            >
+              <MailPlus className="size-3.5" />
+              Template
+            </Button>
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">Set status</Button>
@@ -168,6 +246,50 @@ export default function ConversationThreadPage() {
           <SendHorizonal className="size-4" />
         </Button>
       </div>
+
+      <Dialog open={templateOpen} onOpenChange={setTemplateOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Send WhatsApp template</DialogTitle>
+            <DialogDescription>
+              Use this for approved Meta templates, including messages outside the 24-hour reply window.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Template</Label>
+              <Select value={selectedTemplateId} onValueChange={setTemplateId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a template" />
+                </SelectTrigger>
+                <SelectContent>
+                  {approvedTemplates.map((template) => (
+                    <SelectItem key={template.id} value={template.id}>
+                      {template.name} · {template.language}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="template-params">Parameters JSON</Label>
+              <Textarea
+                id="template-params"
+                className="min-h-24 font-mono text-xs"
+                value={templateParams}
+                onChange={(event) => setTemplateParams(event.target.value)}
+                placeholder='{"1":"Acme"}'
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTemplateOpen(false)}>Cancel</Button>
+            <Button onClick={sendTemplate} disabled={sendingTemplate || !selectedTemplateId}>
+              {sendingTemplate ? "Queueing…" : "Queue template"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

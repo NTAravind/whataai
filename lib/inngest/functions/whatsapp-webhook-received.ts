@@ -57,9 +57,20 @@ export const whatsappWebhookIngest = inngest.createFunction(
       return { skipped: true };
     }
 
-    const parsed = await step.run("normalize-payload", () =>
-      whatsappAdapter.parseWebhook(d.raw),
-    );
+    const parsed = await step.run("normalize-payload", () => {
+      const normalized = whatsappAdapter.parseWebhook(d.raw);
+      if (d.eventType === "message") {
+        normalized.messages = normalized.messages.filter(
+          (message) => message.providerMessageId === d.providerEventId,
+        );
+      }
+      if (d.eventType === "status") {
+        normalized.statuses = normalized.statuses.filter(
+          (status) => `${status.providerMessageId}-${status.status}` === d.providerEventId,
+        );
+      }
+      return normalized;
+    });
 
     // ---- template status updates (message_template_status_update field) ----
     if (d.eventType === "template") {

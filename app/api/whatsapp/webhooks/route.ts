@@ -23,11 +23,22 @@ export async function GET(request: Request) {
 
   const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
 
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+  if (mode === "subscribe" && token && (token === VERIFY_TOKEN || (await matchesAccountVerifyToken(token)))) {
     return new Response(challenge, { status: 200 });
   }
 
   return new Response("Forbidden", { status: 403 });
+}
+
+/** Accept a verify token that any tenant's wa_account was configured with. */
+async function matchesAccountVerifyToken(token: string): Promise<boolean> {
+  try {
+    const { matchWaVerifyToken } = await import("@/lib/services/wa-accounts");
+    return await matchWaVerifyToken(token);
+  } catch (err) {
+    console.error("webhook verify-token lookup failed", err);
+    return false;
+  }
 }
 
 export async function POST(request: Request) {

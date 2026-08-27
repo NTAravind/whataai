@@ -53,6 +53,9 @@ export async function POST(request: Request, { params }: Ctx) {
     if (!channelAccountId) {
       return handleError(new Error("Conversation has no bound channel account"));
     }
+    if (!conversation.contact_id) {
+      return handleError(new Error("Conversation has no contact"));
+    }
 
     const senderId =
       (conversation.metadata?.sender_id as string | undefined) ??
@@ -64,7 +67,7 @@ export async function POST(request: Request, { params }: Ctx) {
       channel: conversation.channel,
       channelAccountId,
       conversationId,
-      contactId: conversation.contact_id ?? "",
+      contactId: conversation.contact_id,
       senderId: senderId ?? "",
       content: { type: "text", text },
       agentId: conversation.agent_id ?? null,

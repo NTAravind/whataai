@@ -22,12 +22,16 @@ class MetaApiError extends Error {
   }
 }
 
-async function metaFetch(path: string, init: { method?: string; body?: unknown } = {}) {
+async function metaFetch(
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+  accessToken?: string,
+) {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: init.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.WHATSAPP_API_KEY}`,
+      Authorization: `Bearer ${accessToken ?? process.env.WHATSAPP_API_KEY}`,
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
@@ -56,6 +60,34 @@ function safeJson(text: string): unknown {
 }
 
 // ---------------------------------------------------------------------------
+// Phone number status (GET /{PHONE_NUMBER_ID})
+// ---------------------------------------------------------------------------
+
+export interface PhoneNumberInfo {
+  id: string;
+  verified_name?: string;
+  display_phone_number?: string;
+  quality_rating?: string;
+  code_verification_status?: string;
+  platform_type?: string;
+  throughput?: { level?: string };
+}
+
+/**
+ * Fetch a phone number's Meta-side state with a specific (per-account) token.
+ * A 2xx means the token can access this phone number — the basis for the
+ * account's "connected" status in settings.
+ */
+export async function getPhoneNumberInfo(phoneNumberId: string, accessToken?: string): Promise<PhoneNumberInfo> {
+  const json = await metaFetch(
+    `/${phoneNumberId}?fields=verified_name,display_phone_number,quality_rating,code_verification_status,platform_type,throughput`,
+    {},
+    accessToken,
+  );
+  return json as PhoneNumberInfo;
+}
+
+// ---------------------------------------------------------------------------
 // Messaging (POST /{PHONE_NUMBER_ID}/messages)
 // ---------------------------------------------------------------------------
 
@@ -64,6 +96,8 @@ export interface SendTextInput {
   to: string;
   text: string;
   previewUrl?: boolean;
+  /** Per-account token; falls back to WHATSAPP_API_KEY. */
+  accessToken?: string;
 }
 
 export interface SendTemplateInput {
@@ -73,20 +107,26 @@ export interface SendTemplateInput {
   language: string;
   /** Header/Body/Button component values — see docs/api-guide.md. */
   components?: Record<string, unknown>[];
+  /** Per-account token; falls back to WHATSAPP_API_KEY. */
+  accessToken?: string;
 }
 
 /** Returns the WhatsApp message id (wamid…) assigned by Meta. */
-export async function sendTextMessage({ phoneNumberId, to, text, previewUrl = false }: SendTextInput) {
-  const json = await metaFetch(`/${phoneNumberId}/messages`, {
-    method: "POST",
-    body: {
-      messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to,
-      type: "text",
-      text: { preview_url: previewUrl, body: text },
+export async function sendTextMessage({ phoneNumberId, to, text, previewUrl = false, accessToken }: SendTextInput) {
+  const json = await metaFetch(
+    `/${phoneNumberId}/messages`,
+    {
+      method: "POST",
+      body: {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "text",
+        text: { preview_url: previewUrl, body: text },
+      },
     },
-  });
+    accessToken,
+  );
   return json as { messaging_product: string; contacts: unknown[]; messages: { id: string }[] };
 }
 
@@ -96,21 +136,26 @@ export async function sendTemplateMessage({
   templateName,
   language,
   components,
+  accessToken,
 }: SendTemplateInput) {
-  const json = await metaFetch(`/${phoneNumberId}/messages`, {
-    method: "POST",
-    body: {
-      messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to,
-      type: "template",
-      template: {
-        name: templateName,
-        language: { code: language },
-        ...(components?.length ? { components } : {}),
+  const json = await metaFetch(
+    `/${phoneNumberId}/messages`,
+    {
+      method: "POST",
+      body: {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: language },
+          ...(components?.length ? { components } : {}),
+        },
       },
     },
-  });
+    accessToken,
+  );
   return json as { messaging_product: string; contacts: unknown[]; messages: { id: string }[] };
 }
 
@@ -253,25 +298,31 @@ export interface TriggerFlowInput {
   ctaText: string;
   data?: Record<string, unknown>;
   mode?: "draft" | "published";
+  /** Per-account token; falls back to WHATSAPP_API_KEY. */
+  accessToken?: string;
 }
 
-export async function triggerFlow({ phoneNumberId, to, flowId, ctaText, data, mode = "published" }: TriggerFlowInput) {
-  const json = await metaFetch(`/${phoneNumberId}/messages`, {
-    method: "POST",
-    body: {
-      messaging_product: "whatsapp",
-      recipient_type: "individual",
-      to,
-      type: "flow",
-      flow: {
-        mode,
-        flow_message_type: "flow",
-        flow_id: flowId,
-        flow_cta: ctaText,
-        ...(data ? { flow_token: data } : {}),
+export async function triggerFlow({ phoneNumberId, to, flowId, ctaText, data, mode = "published", accessToken }: TriggerFlowInput) {
+  const json = await metaFetch(
+    `/${phoneNumberId}/messages`,
+    {
+      method: "POST",
+      body: {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "flow",
+        flow: {
+          mode,
+          flow_message_type: "flow",
+          flow_id: flowId,
+          flow_cta: ctaText,
+          ...(data ? { flow_token: data } : {}),
+        },
       },
     },
-  });
+    accessToken,
+  );
   return json as { messaging_product: string; contacts: unknown[]; messages: { id: string }[] };
 }
 

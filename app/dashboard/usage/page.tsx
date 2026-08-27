@@ -1,7 +1,8 @@
 "use client";
 
-import { Coins, Gauge } from "lucide-react";
+import { Coins, DollarSign, Gauge, IndianRupee } from "lucide-react";
 import { useTenant } from "@/components/providers/tenant-provider";
+import { useCurrency } from "@/hooks/use-currency";
 import { useApi } from "@/hooks/use-api";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,9 +13,11 @@ import { ErrorState, EmptyState, LoadingState } from "@/components/data-state";
 import { formatDateTime } from "@/lib/format";
 import type { UsageCounterRow, UsageEventRow } from "@/app/api/tenants/[tenantId]/usage/route";
 import type { Entitlements } from "@/lib/entitlements/resolve";
+import type { Currency } from "@/lib/format";
 
 export default function UsagePage() {
-  const { tenantId } = useTenant();
+  const { tenantId, tenant } = useTenant();
+  const { currency, formatCurrency } = useCurrency(tenant?.currency as Currency | undefined);
   const base = tenantId ? `/api/tenants/${tenantId}` : null;
 
   const usage = useApi<{ counter: UsageCounterRow | null; events: UsageEventRow[] }>(base ? `${base}/usage` : null);
@@ -27,6 +30,7 @@ export default function UsagePage() {
   const events = usage.data?.events ?? [];
   const budget = ent.data?.entitlements.tokenBudgetMonthly ?? 0;
   const tokensUsed = counter?.tokens_used ?? 0;
+  const costUsed = counter?.cost_usd ?? 0;
   const pct = budget > 0 ? Math.min(100, Math.round((tokensUsed / budget) * 100)) : 0;
 
   return (
@@ -39,18 +43,32 @@ export default function UsagePage() {
         <ErrorState message={error} />
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  {currency === "INR" ? <IndianRupee className="size-4" /> : <DollarSign className="size-4" />}
+                  Cost this period
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-3xl font-semibold">{formatCurrency(costUsed, 4)}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {tokensUsed.toLocaleString()} tokens used
+                </p>
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Coins className="size-4" />
-                  Tokens this period
+                  Token budget
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-3xl font-semibold">{tokensUsed.toLocaleString()}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  of {budget.toLocaleString()} monthly budget
+                  of {budget.toLocaleString()} monthly limit
                 </p>
                 <Progress className="mt-3" value={pct} />
               </CardContent>
@@ -103,6 +121,7 @@ export default function UsagePage() {
                       <TableHead className="text-right">Prompt</TableHead>
                       <TableHead className="text-right">Completion</TableHead>
                       <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -113,6 +132,7 @@ export default function UsagePage() {
                         <TableCell className="text-right">{e.prompt_tokens}</TableCell>
                         <TableCell className="text-right">{e.completion_tokens}</TableCell>
                         <TableCell className="text-right font-medium">{e.total_tokens}</TableCell>
+                        <TableCell className="text-right font-medium">{formatCurrency(e.cost_usd ?? 0, 6)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

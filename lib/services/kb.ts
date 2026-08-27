@@ -2,6 +2,19 @@ import { supabaseAdmin, unwrap } from "@/lib/clients/supabase";
 import { inngest } from "@/lib/clients/ingest";
 import { kbDocumentUploaded } from "@/lib/inngest/events";
 
+export interface KnowledgeBaseDocumentRow {
+  id: string;
+  tenant_id: string;
+  title: string;
+  source_type: string;
+  storage_path: string | null;
+  raw_content: string | null;
+  status: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Create a knowledge-base document and enqueue chunking/embedding. */
 export async function createDocument(input: {
   tenantId: string;
@@ -42,8 +55,10 @@ export async function listDocuments(tenantId: string) {
   );
 }
 
-export async function getDocument(documentId: string) {
-  return unwrap(await supabaseAdmin().from("knowledge_base_documents").select("*").eq("id", documentId).single());
+export async function getDocument(documentId: string): Promise<KnowledgeBaseDocumentRow> {
+  return unwrap<KnowledgeBaseDocumentRow>(
+    await supabaseAdmin().from("knowledge_base_documents").select("*").eq("id", documentId).single(),
+  );
 }
 
 export async function deleteDocument(tenantId: string, documentId: string) {

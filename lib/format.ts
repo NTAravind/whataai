@@ -22,3 +22,24 @@ export function formatDateTime(iso: string | null | undefined): string {
     minute: "2-digit",
   });
 }
+
+export type Currency = "USD" | "INR";
+
+const CONVERSION_RATE_INR = 83.5; // Example conversion rate
+
+export function formatCurrency(amountUsd: number, currency: Currency, fractionDigits = 4): string {
+  if (currency === "INR") {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    }).format(amountUsd * CONVERSION_RATE_INR);
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(amountUsd);
+}

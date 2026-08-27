@@ -13,6 +13,9 @@ export async function POST(request: Request, { params }: Ctx) {
   if (!body || typeof body.waAccountId !== "string") {
     return NextResponse.json({ error: "waAccountId is required" }, { status: 400 });
   }
+  if (!body.waAccountId) {
+    return NextResponse.json({ error: "waAccountId must not be empty" }, { status: 400 });
+  }
 
   try {
     await requireTenantAccess(tenantId);

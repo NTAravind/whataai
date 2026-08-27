@@ -1,4 +1,4 @@
-import type { ChannelAdapter, ChannelCtx, InboundMessage, SendResult, TemplateRef } from "./channel.interface";
+import type { ChannelAdapter, ChannelCtx, InboundMessage, SendResult } from "./channel.interface";
 
 /**
  * Mail adapter — deliberately thin for MVP (docs/guide.md §9 defers mail
@@ -41,7 +41,7 @@ export const mailAdapter: ChannelAdapter = {
     }
   },
 
-  async sendTemplate(ctx: ChannelCtx, to: string, template: TemplateRef): Promise<SendResult> {
+  async sendTemplate(): Promise<SendResult> {
     // Template sends via Resend need a Resend "Template" — Phase 2.
     return { status: "failed", error: "mail templates not supported yet" };
   },

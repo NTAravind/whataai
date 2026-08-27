@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import type { AuthChangeEvent } from "@supabase/supabase-js";
 import { api } from "@/lib/api/client";
 import { getSupabaseBrowser } from "@/lib/supabase/browser";
 import type { MeResponse } from "@/app/api/me/route";
@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const supabase = getSupabaseBrowser();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, _session: Session | null) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event: AuthChangeEvent) => {
       if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") {
         void refresh();
       }

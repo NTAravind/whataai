@@ -16,7 +16,10 @@ export async function POST(request: Request) {
   if (!body || typeof body.tenantId !== "string" || typeof body.waAccountId !== "string" || typeof body.name !== "string") {
     return NextResponse.json({ error: "tenantId, waAccountId and name are required" }, { status: 400 });
   }
-  if (typeof body.language !== "string" || !CATEGORIES.includes(body.category)) {
+  if (!body.tenantId || !body.waAccountId || !body.name) {
+    return NextResponse.json({ error: "tenantId, waAccountId and name must not be empty" }, { status: 400 });
+  }
+  if (typeof body.language !== "string" || !body.language || !CATEGORIES.includes(body.category)) {
     return NextResponse.json({ error: `language and category (${CATEGORIES.join(" | ")}) are required` }, { status: 400 });
   }
   if (!Array.isArray(body.components)) {

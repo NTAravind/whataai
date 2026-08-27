@@ -1,5 +1,5 @@
 -- ============================================================================
--- WA Agent Platform — Full Schema (ready to run on a fresh Supabase project)
+-- 001_initial-schema.sql — Full schema (ready to run on a fresh Supabase project)
 -- Now includes the universal schema-driven booking engine:
 --   businesses, resources, services, service_schemas, availability_rules,
 --   availability_exceptions, and a generic bookings table.

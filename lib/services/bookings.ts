@@ -1,4 +1,5 @@
 import { supabaseAdmin, unwrap } from "@/lib/clients/supabase";
+import { AgentToolError } from "@/lib/agents/errors";
 
 export interface CreateBookingInput {
   tenantId: string;
@@ -28,7 +29,7 @@ export async function createBooking(input: CreateBookingInput) {
       .gt("end_time", input.startTime)
       .limit(1)
       .maybeSingle();
-    if (clash) throw new Error("That time slot is no longer available");
+    if (clash) throw new AgentToolError("That time slot is no longer available");
   }
 
   const { data, error } = await admin
@@ -65,3 +66,109 @@ export async function listBookings(tenantId: string, from?: string, to?: string)
   if (to) query = query.lte("start_time", to);
   return unwrap(await query);
 }
+
+export async function getBooking(tenantId: string, bookingId: string) {
+  const { data, error } = await supabaseAdmin()
+    .from("bookings")
+    .select(
+      "id, tenant_id, business_id, service_id, resource_id, customer_id, conversation_id, start_time, end_time, status, booking_data, business:businesses(name, timezone), service:services(name), resource:resources(name), customer:contacts(id, full_name, phone_number)",
+    )
+    .eq("id", bookingId)
+    .eq("tenant_id", tenantId)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function cancelBooking(tenantId: string, bookingId: string, reason?: string) {
+  const admin = supabaseAdmin();
+  const { data, error } = await admin
+    .from("bookings")
+    .update({
+      status: "cancelled",
+      metadata: {
+        cancelled_at: new Date().toISOString(),
+        cancel_reason: reason ?? "Requested by customer/user",
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", bookingId)
+    .eq("tenant_id", tenantId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function scheduleBookingReminder(
+  tenantId: string,
+  bookingId: string,
+  hoursBefore: number = 24,
+) {
+  const { scheduleMessage } = await import("@/lib/services/scheduling");
+  const admin = supabaseAdmin();
+  const { data: bookingData, error: bErr } = await admin
+    .from("bookings")
+    .select(
+      "id, start_time, customer_id, conversation_id, service:services(name), customer:contacts(id, phone_number, full_name)",
+    )
+    .eq("id", bookingId)
+    .eq("tenant_id", tenantId)
+    .single();
+
+  if (bErr || !bookingData) throw bErr ?? new Error("Booking not found");
+
+  const booking = (bookingData as unknown) as {
+    id: string;
+    start_time: string;
+    customer_id: string | null;
+    conversation_id: string | null;
+    service?: { name: string } | { name: string }[] | null;
+    customer?: { id: string; phone_number: string | null; full_name: string | null } | { id: string; phone_number: string | null; full_name: string | null }[] | null;
+  };
+
+  if (!booking.customer_id) {
+    throw new Error("Cannot send reminder: No contact attached to this booking");
+  }
+
+  const { data: waAcc } = await admin
+    .from("wa_accounts")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .limit(1)
+    .maybeSingle();
+
+  if (!waAcc) throw new Error("No active WhatsApp account configured for sending reminders");
+
+  const startTimeMs = new Date(booking.start_time).getTime();
+  const sendAtMs = hoursBefore > 0 ? startTimeMs - hoursBefore * 3600 * 1000 : Date.now();
+  const sendAtISO = new Date(Math.max(sendAtMs, Date.now() + 5000)).toISOString();
+
+  const formattedDate = new Date(booking.start_time).toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  const serviceObj = Array.isArray(booking.service) ? booking.service[0] : booking.service;
+  const customerObj = Array.isArray(booking.customer) ? booking.customer[0] : booking.customer;
+
+  const serviceName = serviceObj?.name ?? "Appointment";
+  const customerName = customerObj?.full_name ? `, ${customerObj.full_name}` : "";
+  const reminderText = `Reminder${customerName}: Your ${serviceName} booking is scheduled for ${formattedDate}. Please let us know if you need to reschedule or cancel!`;
+
+  return scheduleMessage({
+    tenantId,
+    channel: "whatsapp",
+    channelAccountId: waAcc.id,
+    contactId: booking.customer_id,
+    conversationId: booking.conversation_id ?? undefined,
+    sendAt: sendAtISO,
+    content: {
+      type: "text",
+      text: reminderText,
+    },
+  });
+}
+

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Boxes, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api/client";
 import { PageHeader } from "@/components/page-header";

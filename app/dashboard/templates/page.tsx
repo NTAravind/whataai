@@ -2,13 +2,14 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Plus, RefreshCw } from "lucide-react";
+import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useTenant } from "@/components/providers/tenant-provider";
 import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api/client";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -28,6 +29,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { ErrorState, EmptyState, LoadingState } from "@/components/data-state";
 import { formatDateTime } from "@/lib/format";
 import type { TemplateRow, WaAccountRow } from "@/lib/api/types";
@@ -53,13 +65,32 @@ export default function TemplatesPage() {
   const [category, setCategory] = useState<string>("UTILITY");
   const [language, setLanguage] = useState("en_US");
   const [body, setBody] = useState("");
+  const [paramLabels, setParamLabels] = useState<string[]>([]);
   const [waAccountId, setWaAccountId] = useState("");
   const [creating, setCreating] = useState(false);
+
+  /** Detect {{N}} placeholders in the body text and sync the labels array length. */
+  function handleBodyChange(text: string) {
+    setBody(text);
+    const matches = [...text.matchAll(/\{\{(\d+)\}\}/g)];
+    const indices = matches.map((m) => parseInt(m[1], 10));
+    const maxIdx = indices.length ? Math.max(...indices) : 0;
+    setParamLabels((prev) => {
+      const next = Array.from({ length: maxIdx }, (_, i) => prev[i] ?? "");
+      return next;
+    });
+  }
 
   async function create() {
     if (!tenantId) return;
     setCreating(true);
     try {
+      // Build the BODY component, attaching example values if variables exist
+      const bodyComponent: Record<string, unknown> = { type: "BODY", text: body };
+      if (paramLabels.length > 0) {
+        // example.body_text is a 2-D array: outer = messages (just 1), inner = param values
+        bodyComponent.example = { body_text: [paramLabels.map((l) => l.trim() || `{{${paramLabels.indexOf(l) + 1}}}`)] };
+      }
       await api("/api/whatsapp/templates/create", {
         method: "POST",
         body: JSON.stringify({
@@ -68,13 +99,14 @@ export default function TemplatesPage() {
           name: name.trim(),
           language,
           category,
-          components: [{ type: "BODY", text: body }],
+          components: [bodyComponent],
         }),
       });
       toast.success("Template submitted for review");
       setOpen(false);
       setName("");
       setBody("");
+      setParamLabels([]);
       templates.reload();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create template");
@@ -97,9 +129,29 @@ export default function TemplatesPage() {
     }
   }
 
+  async function removeTemplate(template: TemplateRow) {
+    if (!tenantId) return;
+    try {
+      await api("/api/whatsapp/templates/delete", {
+        method: "DELETE",
+        body: JSON.stringify({ tenantId, templateId: template.id }),
+      });
+      toast.success("Template deleted");
+      templates.reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete template");
+    }
+  }
+
   const list = templates.data?.templates ?? [];
   const waAccounts = wa.data?.waAccounts ?? [];
+  const bodyHasEdgeVars = /^\s*\{\{\d+\}\}/.test(body) || /\{\{\d+\}\}\s*$/.test(body);
   const selectedWaAccount = waAccounts.find((a) => a.id === waAccountId) ?? waAccounts[0];
+
+  // Auto-select the first WA account when the list loads
+  if (waAccounts.length > 0 && !waAccountId) {
+    setWaAccountId(waAccounts[0].id);
+  }
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6 lg:p-8">
@@ -157,18 +209,50 @@ export default function TemplatesPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="template-body">Body</Label>
-                <textarea
+                <Textarea
                   id="template-body"
-                  className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="min-h-24"
                   placeholder="Hi {{1}}, your order is on the way!"
                   value={body}
-                  onChange={(e) => setBody(e.target.value)}
+                  onChange={(e) => handleBodyChange(e.target.value)}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Use <code className="font-mono">{'{{1}}'}</code>, <code className="font-mono">{'{{2}}'}</code>… for dynamic values.
+                </p>
+                {bodyHasEdgeVars && (
+                  <p className="text-xs text-destructive">
+                    Variables can&apos;t be at the start or end of the body — Meta will reject it.
+                  </p>
+                )}
               </div>
+
+              {paramLabels.length > 0 && (
+                <div className="space-y-3 rounded-lg border bg-muted/40 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Describe each variable — the agent will use these descriptions to know what value to fill in.
+                  </p>
+                  {paramLabels.map((label, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground w-8">{`{{${i + 1}}}`}</span>
+                      <Input
+                        id={`param-label-${i}`}
+                        placeholder={`e.g. customer first name`}
+                        value={label}
+                        onChange={(e) => {
+                          const next = [...paramLabels];
+                          next[i] = e.target.value;
+                          setParamLabels(next);
+                        }}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={create} disabled={creating || !name.trim() || !body.trim() || !waAccounts.length}>
+              <Button onClick={create} disabled={creating || !name.trim() || !body.trim() || !waAccountId || bodyHasEdgeVars || !waAccounts.length}>
                 {creating ? "Submitting…" : "Submit for review"}
               </Button>
             </DialogFooter>
@@ -199,6 +283,7 @@ export default function TemplatesPage() {
                 <TableHead>Language</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
+                <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -209,6 +294,27 @@ export default function TemplatesPage() {
                   <TableCell>{t.language}</TableCell>
                   <TableCell><StatusBadge status={t.status} /></TableCell>
                   <TableCell className="text-muted-foreground">{formatDateTime(t.created_at)}</TableCell>
+                  <TableCell>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="size-8 text-destructive">
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete template?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This deletes “{t.name}” locally and makes a best-effort delete request to Meta.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => removeTemplate(t)}>Delete</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

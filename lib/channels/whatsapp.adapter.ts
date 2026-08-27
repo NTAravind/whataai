@@ -24,8 +24,8 @@ export const whatsappAdapter: ChannelAdapter = {
 
   async sendText(ctx, to, text): Promise<SendResult> {
     try {
-      const phoneNumberId = await resolvePhoneNumberId(ctx);
-      const { messages } = await sendTextMessage({ phoneNumberId, to, text });
+      const { phoneNumberId, accessToken } = await resolvePhone(ctx);
+      const { messages } = await sendTextMessage({ phoneNumberId, to, text, accessToken });
       return { providerMessageId: messages[0]?.id, status: "queued" };
     } catch (err) {
       return { status: "failed", error: err instanceof Error ? err.message : String(err) };
@@ -34,13 +34,14 @@ export const whatsappAdapter: ChannelAdapter = {
 
   async sendTemplate(ctx, to, template: TemplateRef): Promise<SendResult> {
     try {
-      const phoneNumberId = await resolvePhoneNumberId(ctx);
+      const { phoneNumberId, accessToken } = await resolvePhone(ctx);
       const { messages } = await sendTemplateMessage({
         phoneNumberId,
         to,
         templateName: template.name,
         language: template.language,
         components: template.components,
+        accessToken,
       });
       return { providerMessageId: messages[0]?.id, status: "queued" };
     } catch (err) {
@@ -50,13 +51,14 @@ export const whatsappAdapter: ChannelAdapter = {
 
   async triggerFlow(ctx, to, flow: FlowRef): Promise<SendResult> {
     try {
-      const phoneNumberId = await resolvePhoneNumberId(ctx);
+      const { phoneNumberId, accessToken } = await resolvePhone(ctx);
       const { messages } = await metaTriggerFlow({
         phoneNumberId,
         to,
         flowId: flow.flowId,
         ctaText: flow.ctaText,
         data: flow.data,
+        accessToken,
       });
       return { providerMessageId: messages[0]?.id, status: "queued" };
     } catch (err) {
@@ -138,18 +140,18 @@ export const whatsappAdapter: ChannelAdapter = {
   },
 };
 
-async function resolvePhoneNumberId(ctx: ChannelCtx): Promise<string> {
+async function resolvePhone(ctx: ChannelCtx): Promise<{ phoneNumberId: string; accessToken?: string }> {
   // ctx.channelAccountId is wa_accounts.id (a uuid), not the Meta phone
   // number id. Look it up via the admin client.
   const { supabaseAdmin } = await import("@/lib/clients/supabase");
   const { data, error } = await supabaseAdmin()
     .from("wa_accounts")
-    .select("wa_phone_number_id")
+    .select("wa_phone_number_id, access_token")
     .eq("id", ctx.channelAccountId)
     .single();
 
   if (error || !data) {
     throw new Error(`wa_account ${ctx.channelAccountId} not found or has no phone number id`);
   }
-  return data.wa_phone_number_id;
+  return { phoneNumberId: data.wa_phone_number_id, accessToken: data.access_token ?? undefined };
 }

@@ -22,6 +22,7 @@ export interface UsageEventRow {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cost_usd: number;
   model: string | null;
   created_at: string;
 }

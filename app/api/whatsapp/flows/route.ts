@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { inngest } from "@/lib/clients/ingest";
 import { flowDataExchange } from "@/lib/inngest/events";
 import {
@@ -44,11 +45,13 @@ export async function POST(request: Request) {
   // Journal the exchange; the function commits the state transition and any
   // completion side-effects (booking creation) durably.
   try {
+    const eventFingerprint = createHash("sha256")
+      .update(JSON.stringify({ action: payload.action, screen: payload.screen, data: payload.data }))
+      .digest("hex");
     await inngest.send({
-      id: `flow-${payload.flow_token ?? ""}-${payload.action}`,
+      id: `flow-${payload.flow_token ?? ""}-${eventFingerprint}`,
       name: flowDataExchange.name,
       data: {
-        flowSessionId: "", // resolved server-side by flow_token
         flowToken: payload.flow_token ?? "",
         action: payload.action as "INIT" | "data_exchange" | "BACK" | "ping" | "error",
         screen: payload.screen,

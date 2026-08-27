@@ -5,7 +5,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
+  BookOpenText,
+  Bot,
+  Briefcase,
   Building2,
+  CalendarCheck,
+  CalendarDays,
+  Clock,
   CreditCard,
   LayoutDashboard,
   MailPlus,
@@ -17,22 +23,40 @@ import {
   UserPlus,
   Users,
   Boxes,
+  Wrench,
+  Contact,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useTenant } from "@/components/providers/tenant-provider";
 import { TenantSwitcher } from "@/components/tenant-switcher";
 import { UserMenu } from "@/components/user-menu";
 import { cn } from "@/lib/utils";
+import { useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 
-const dashboardNav = [
+const mainNav = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/dashboard/conversations", label: "Conversations", icon: MessagesSquare },
-  { href: "/dashboard/agents", label: "Agents", icon: Sparkles },
+  { href: "/dashboard/bookings", label: "Bookings", icon: CalendarCheck },
+  { href: "/dashboard/contacts", label: "Contacts", icon: Contact },
+];
+
+const setupNav = [
+  { href: "/dashboard/businesses", label: "Businesses", icon: Briefcase },
+  { href: "/dashboard/services", label: "Services", icon: Wrench },
+  { href: "/dashboard/resources", label: "Resources", icon: Users },
+  { href: "/dashboard/availability", label: "Availability", icon: Clock },
+];
+
+const secondaryNav = [
+  { href: "/dashboard/agents", label: "AI Agents", icon: Bot },
+  { href: "/dashboard/knowledge", label: "Knowledge Base", icon: BookOpenText },
+  { href: "/dashboard/templates", label: "WhatsApp Templates", icon: MailPlus },
   { href: "/dashboard/usage", label: "Usage", icon: BarChart3 },
-  { href: "/dashboard/templates", label: "Templates", icon: MailPlus },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
@@ -79,6 +103,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { tenantId } = useTenant();
   const pathname = usePathname();
   const router = useRouter();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -98,25 +123,75 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-muted/30">
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r bg-background p-3 lg:flex">
-        <Link href="/dashboard" className="flex items-center gap-2 px-2 py-2">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <MessageSquareText className="size-4" />
-          </div>
-          <span className="font-semibold tracking-tight">Whata AI</span>
-        </Link>
+      <aside
+        className={cn(
+          "sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-background p-3 lg:flex transition-all duration-300",
+          isSidebarOpen ? "w-60" : "w-0 p-0 overflow-hidden border-none opacity-0"
+        )}
+      >
+        <div className="flex items-center justify-between px-2 py-2">
+          <Link href="/dashboard" className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <MessageSquareText className="size-4" />
+            </div>
+            <span className="font-semibold tracking-tight whitespace-nowrap">Whata AI</span>
+          </Link>
+          <Button variant="ghost" size="icon" onClick={() => setIsSidebarOpen(false)} className="h-8 w-8 shrink-0">
+            <PanelLeftClose className="size-4" />
+          </Button>
+        </div>
 
         <div className="mt-3">
           <TenantSwitcher />
         </div>
 
-        <nav className="mt-4 flex flex-col gap-0.5">
-          <p className="px-3 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            {inAdmin ? "Admin" : "Workspace"}
-          </p>
-          {(inAdmin ? adminNav : dashboardNav).map((item) => (
-            <NavLink key={item.href} {...item} pathname={pathname} />
-          ))}
+        <div className="mt-4 px-2">
+          <Button
+            asChild
+            className="w-full justify-start gap-2 shadow-sm"
+            variant={pathname.startsWith("/dashboard/chat") ? "default" : "outline"}
+          >
+            <Link href="/dashboard/chat">
+              <Sparkles className="size-4" />
+              AI Co-pilot
+            </Link>
+          </Button>
+        </div>
+
+        <nav className="mt-4 flex flex-col gap-0.5 overflow-y-auto pr-1">
+          {inAdmin ? (
+            <>
+              <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Admin
+              </p>
+              {adminNav.map((item) => (
+                <NavLink key={item.href} {...item} pathname={pathname} />
+              ))}
+            </>
+          ) : (
+            <>
+              <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Main
+              </p>
+              {mainNav.map((item) => (
+                <NavLink key={item.href} {...item} pathname={pathname} />
+              ))}
+
+              <p className="mt-3 px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Booking Setup
+              </p>
+              {setupNav.map((item) => (
+                <NavLink key={item.href} {...item} pathname={pathname} />
+              ))}
+
+              <p className="mt-3 px-3 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Platform
+              </p>
+              {secondaryNav.map((item) => (
+                <NavLink key={item.href} {...item} pathname={pathname} />
+              ))}
+            </>
+          )}
         </nav>
 
         <div className="mt-auto space-y-3">
@@ -135,7 +210,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col relative">
+        {!isSidebarOpen && (
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setIsSidebarOpen(true)}
+            className="absolute top-4 left-4 z-50 hidden lg:flex shadow-sm bg-background/80 backdrop-blur-sm"
+          >
+            <PanelLeftOpen className="size-4 text-muted-foreground" />
+          </Button>
+        )}
+
         <header className="flex items-center justify-between gap-4 border-b bg-background/80 px-4 py-3 backdrop-blur lg:hidden">
           <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
             <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">

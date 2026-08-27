@@ -1,7 +1,7 @@
 import { inngest } from "@/lib/clients/ingest";
 import { messageInbound } from "@/lib/inngest/events";
 import { supabaseAdmin } from "@/lib/clients/supabase";
-import { loadConversationContext, listMessages } from "@/lib/services/conversations";
+import { loadConversationContext, listMessages, pickAgentForConversation } from "@/lib/services/conversations";
 import { runDurableAgent, historyFromDb } from "@/lib/agents/runtime";
 import { resolveEntitlements, hasTokenBudget } from "@/lib/entitlements/resolve";
 import { enqueueOutboundMessage } from "@/lib/services/messages";
@@ -62,9 +62,28 @@ export const messageInboundFunction = inngest.createFunction(
       return { conversationContext, history: historyFromDb(messages) };
     });
 
-    const agent = ctx.conversationContext.agent;
+    let agent = ctx.conversationContext.agent;
     if (!agent) {
-      logger.warn("no agent assigned", { conversationId: d.conversationId });
+      agent = (await step.run("assign-fallback-agent", async () => {
+        const fallback = await pickAgentForConversation({
+          tenantId: d.tenantId,
+          channel: d.channel,
+          channelAccountId: d.channelAccountId,
+        });
+        if (!fallback) return null;
+
+        const { error } = await supabaseAdmin()
+          .from("conversations")
+          .update({ agent_id: fallback.id })
+          .eq("id", d.conversationId)
+          .eq("tenant_id", d.tenantId);
+        if (error) throw error;
+        return fallback;
+      })) as typeof agent;
+    }
+
+    if (!agent) {
+      logger.warn("no agent available", { conversationId: d.conversationId, tenantId: d.tenantId });
       return { skipped: true, reason: "no_agent" };
     }
 
@@ -85,11 +104,21 @@ export const messageInboundFunction = inngest.createFunction(
       },
       history: ctx.history as Awaited<ReturnType<typeof historyFromDb>>,
       step,
+      logger: {
+        warn: (message, data) => logger.warn(message, data),
+      },
     });
 
-    if (result.text.trim().length === 0) {
-      logger.warn("empty agent response", { conversationId: d.conversationId });
-      return { skipped: true, reason: "empty_response" };
+    const replyText = result.text.trim() || "Thanks for your message. Please give us a moment while we look into this.";
+    if (!result.text.trim()) {
+      logger.warn("empty agent response; sending fallback", {
+        conversationId: d.conversationId,
+        agentId: agent.id,
+        iterations: result.iterations,
+        endedWithToolCall: result.endedWithToolCall,
+        finalMessageType: result.finalMessageType,
+        generatedAssistantMessages: result.generatedAssistantMessages,
+      });
     }
 
     // Persist assistant message + send it durably (separate function so a
@@ -102,19 +131,44 @@ export const messageInboundFunction = inngest.createFunction(
         conversationId: d.conversationId,
         contactId: d.contactId,
         senderId: d.senderId,
-        content: { type: "text", text: result.text },
+        content: { type: "text", text: replyText },
         agentId: agent.id,
       });
       return message.id;
     });
+    logger.info("outbound agent reply enqueued", {
+      conversationId: d.conversationId,
+      messageId: sent,
+      usedFallback: !result.text.trim(),
+    });
 
     await step.run("record-usage", async () => {
-      const { error } = await supabaseAdmin().rpc("increment_usage_counter", {
-        tenant_id: d.tenantId,
-        tokens: result.usage.totalTokens,
-        cost: 0,
-      });
-      if (error) logger.warn("failed to record usage", { error: error.message });
+      const usage = result.usage;
+      const promptTokens = usage.inputTokens ?? 0;
+      const completionTokens = usage.outputTokens ?? 0;
+      const totalTokens = usage.totalTokens ?? (promptTokens + completionTokens);
+      const cost = result.cost ?? 0;
+
+      if (totalTokens > 0) {
+        const { error: counterErr } = await supabaseAdmin().rpc("increment_usage_counter", {
+          tenant_id: d.tenantId,
+          tokens: totalTokens,
+          cost,
+        });
+        if (counterErr) logger.warn("failed to increment usage counter", { error: counterErr.message });
+
+        const { error: eventErr } = await supabaseAdmin().from("usage_events").insert({
+          tenant_id: d.tenantId,
+          message_id: sent,
+          agent_id: agent.id,
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: totalTokens,
+          cost_usd: cost,
+          model: agent.model_config?.model ?? null,
+        });
+        if (eventErr) logger.warn("failed to insert usage event", { error: eventErr.message });
+      }
     });
 
     return { replyMessageId: sent, iterations: result.iterations };

@@ -20,21 +20,22 @@ export async function POST(request: Request, { params }: Ctx) {
     await requireTenantAccess(tenantId);
     const body = (await request.json()) as {
       wa_phone_number_id?: string;
-      display_phone_number?: string;
       wa_business_account_id?: string;
-      status?: string;
+      access_token?: string;
+      verify_token?: string;
       metadata?: Record<string, unknown>;
     };
     if (!body.wa_phone_number_id?.trim()) return handleError(new Error("wa_phone_number_id is required"));
-    if (!body.display_phone_number?.trim()) return handleError(new Error("display_phone_number is required"));
     if (!body.wa_business_account_id?.trim()) return handleError(new Error("wa_business_account_id is required"));
+    if (!body.access_token?.trim()) return handleError(new Error("Permanent access token is required"));
+    if (!body.verify_token?.trim()) return handleError(new Error("Webhook verify token is required"));
     return created({
       waAccount: await createWaAccount({
         tenant_id: tenantId,
         wa_phone_number_id: body.wa_phone_number_id.trim(),
-        display_phone_number: body.display_phone_number.trim(),
         wa_business_account_id: body.wa_business_account_id.trim(),
-        status: body.status,
+        access_token: body.access_token.trim(),
+        verify_token: body.verify_token.trim(),
         metadata: body.metadata,
       }),
     });

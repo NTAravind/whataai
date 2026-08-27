@@ -107,6 +107,7 @@ export async function loadConversationContext(conversationId: string): Promise<C
       .from("agents")
       .select("id, type, name, instructions, model_config")
       .eq("id", conversation.agent_id)
+      .eq("enabled", true)
       .single();
     if (!agentErr && agentRow) {
       const tools = unwrap(
@@ -141,7 +142,7 @@ export async function getConversation(tenantId: string, conversationId: string) 
     await supabaseAdmin()
       .from("conversations")
       .select(
-        "id, channel, status, last_message_at, last_inbound_at, unread_count, metadata, contact:contacts(*), agent:agents(id, name, type, instructions)",
+        "id, tenant_id, contact_id, agent_id, channel, wa_account_id, mail_account_id, status, last_message_at, last_inbound_at, unread_count, metadata, contact:contacts(*), agent:agents(id, name, type, instructions)",
       )
       .eq("tenant_id", tenantId)
       .eq("id", conversationId)
@@ -216,6 +217,18 @@ export async function pickAgentForConversation(input: {
         .single();
       agentRow = found ?? null;
     }
+  }
+
+  if (!agentRow) {
+    const { data } = await admin
+      .from("agents")
+      .select("id, type, name, instructions, model_config")
+      .eq("tenant_id", input.tenantId)
+      .eq("enabled", true)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    agentRow = data ?? null;
   }
 
   if (!agentRow) return null;

@@ -14,6 +14,15 @@ export const contentSchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const whatsappBulkSend = eventType("whatsapp/bulk.send", {
+  schema: z.object({
+    tenantId: z.string().uuid(),
+    templateName: z.string(),
+    contactIds: z.array(z.string()),
+    variables: z.record(z.string(), z.string()).optional(),
+  }),
+});
+
 // ---------------------------------------------------------------------------
 // Inbound webhook raw payloads (route → ingest function)
 // ---------------------------------------------------------------------------
@@ -108,7 +117,6 @@ export const scheduleMessageRun = eventType("schedule/message.run", {
 
 export const flowDataExchange = eventType("flow/data.exchange", {
   schema: z.object({
-    flowSessionId: z.string().uuid(),
     flowToken: z.string(),
     action: z.enum(["INIT", "data_exchange", "BACK", "ping", "error"]),
     screen: z.string().optional(),

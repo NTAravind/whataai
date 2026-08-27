@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { ShieldPlus, Trash2, UserPlus } from "lucide-react";
+import { ShieldPlus, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api/client";
 import { PageHeader } from "@/components/page-header";

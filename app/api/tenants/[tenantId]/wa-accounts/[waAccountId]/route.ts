@@ -20,9 +20,9 @@ export async function PATCH(request: Request, { params }: Ctx) {
     await requireTenantAccess(tenantId);
     const body = (await request.json()) as {
       wa_phone_number_id?: string;
-      display_phone_number?: string;
       wa_business_account_id?: string;
-      status?: string;
+      access_token?: string;
+      verify_token?: string;
       metadata?: Record<string, unknown>;
     };
     return ok({ waAccount: await updateWaAccount(tenantId, waAccountId, body) });

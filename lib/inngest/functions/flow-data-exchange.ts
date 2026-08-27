@@ -27,13 +27,17 @@ export const flowDataExchangeHandler = inngest.createFunction(
       const { data, error } = await supabaseAdmin()
         .from("flow_sessions")
         .select(
-          "id, tenant_id, flow_id, current_screen, collected_data, screen_history, status, business_id, conversation_id",
+          "id, tenant_id, flow_id, current_screen, collected_data, screen_history, status, booking_id, business_id, conversation_id",
         )
         .eq("flow_token", d.flowToken)
         .single();
       if (error) throw error;
       return data;
     });
+
+    if (session.status === "completed" && session.booking_id) {
+      return { action: d.action, skipped: true, reason: "session_completed" };
+    }
 
     // ping / error / BACK are state transitions but never create bookings.
     if (d.action === "ping" || d.action === "error") {

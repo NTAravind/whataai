@@ -18,7 +18,7 @@ export const outboundMessage = inngest.createFunction(
     id: "outbound-message",
     name: "Outbound Message Send",
     triggers: [messageOutboundSend],
-    idempotency: "event.data.messageId ?? event.data.scheduledMessageId",
+    idempotency: "has(event.data.messageId) ? event.data.messageId : event.data.scheduledMessageId",
     retries: 4,
   },
   async ({ event, step, logger }) => {
@@ -114,6 +114,14 @@ export const outboundMessage = inngest.createFunction(
       });
       throw new Error(`send failed: ${result.error}`);
     }
+
+    logger.info("outbound message sent", {
+      messageId: d.messageId,
+      conversationId: d.conversationId,
+      channel: d.channel,
+      providerMessageId: result.providerMessageId,
+      status: result.status,
+    });
 
     return { providerMessageId: result.providerMessageId, status: result.status };
   },

@@ -15,6 +15,9 @@ export async function POST(request: Request) {
   if (!body || typeof body.to !== "string" || typeof body.text !== "string") {
     return NextResponse.json({ error: "to and text are required" }, { status: 400 });
   }
+  if (!body.to || !body.text) {
+    return NextResponse.json({ error: "to and text must not be empty" }, { status: 400 });
+  }
 
   try {
     const result = await sendWhatsAppText({

@@ -14,6 +14,9 @@ export async function POST(request: Request) {
   if (!body || typeof body.to !== "string" || typeof body.templateId !== "string") {
     return NextResponse.json({ error: "to and templateId are required" }, { status: 400 });
   }
+  if (!body.to || !body.templateId) {
+    return NextResponse.json({ error: "to and templateId must not be empty" }, { status: 400 });
+  }
 
   try {
     const result = await sendUtilityMessage({
