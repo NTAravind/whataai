@@ -22,6 +22,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
       name?: string;
       status?: string;
       max_businesses?: number | null;
+      token_budget_topup?: number;
     };
     return ok({ tenant: await updateTenant(tenantId, body) });
   } catch (e) {

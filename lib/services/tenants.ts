@@ -9,6 +9,7 @@ export interface TenantRow {
   created_at: string;
   updated_at: string;
   max_businesses: number | null;
+  token_budget_topup: number;
 }
 
 
@@ -32,9 +33,15 @@ export interface SubscriptionRow {
   created_at: string;
 }
 
+export interface TenantUsage {
+  tokens_used: number;
+  cost_usd: number;
+}
+
 export interface TenantDetail extends TenantRow {
   members: TenantMemberRow[];
   subscription: SubscriptionRow | null;
+  usage: TenantUsage | null;
 }
 
 export async function listTenants(): Promise<TenantRow[]> {
@@ -52,7 +59,8 @@ export async function getTenant(id: string): Promise<TenantDetail> {
     await admin.from("tenants").select("*").eq("id", id).maybeSingle(),
   );
 
-  const [members, subscription] = await Promise.all([
+  const today = new Date().toISOString().slice(0, 10);
+  const [members, subscription, usageData] = await Promise.all([
     admin.from("tenant_members").select("*").eq("tenant_id", id).order("created_at"),
     admin
       .from("subscriptions")
@@ -61,12 +69,20 @@ export async function getTenant(id: string): Promise<TenantDetail> {
       .eq("status", "active")
       .order("created_at", { ascending: false })
       .maybeSingle(),
+    admin
+      .from("usage_counters")
+      .select("tokens_used, cost_usd")
+      .eq("tenant_id", id)
+      .lte("period_start", today)
+      .gte("period_end", today)
+      .maybeSingle(),
   ]);
 
   return {
     ...tenant,
     members: (members.data ?? []) as TenantMemberRow[],
     subscription: (subscription.data as SubscriptionRow | null) ?? null,
+    usage: (usageData.data as TenantUsage | null) ?? null,
   };
 }
 
@@ -151,12 +167,13 @@ export async function createTenant(input: {
 
 export async function updateTenant(
   id: string,
-  input: { name?: string; status?: string; max_businesses?: number | null },
+  input: { name?: string; status?: string; max_businesses?: number | null; token_budget_topup?: number },
 ): Promise<TenantRow> {
   const patch: Record<string, string | number | null> = {};
   if (input.name !== undefined) patch.name = input.name;
   if (input.status !== undefined) patch.status = input.status;
   if (input.max_businesses !== undefined) patch.max_businesses = input.max_businesses;
+  if (input.token_budget_topup !== undefined) patch.token_budget_topup = input.token_budget_topup;
   if (Object.keys(patch).length === 0) return getTenant(id);
 
   const { data, error } = await supabaseAdmin()

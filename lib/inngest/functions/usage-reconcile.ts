@@ -16,26 +16,15 @@ export const usageReconcile = inngest.createFunction(
     retries: 2,
   },
   async ({ step, logger }) => {
-    const perTenant = await step.run("list-tenants-with-usage", async () => {
-      const { data, error } = await supabaseAdmin()
-        .from("usage_events")
-        .select("tenant_id");
+    const reconciled = await step.run("recompute-all-counters", async () => {
+      // recompute_usage_counters() rebuilds this month's counters from
+      // usage_events for every tenant in a single atomic pass.
+      const { data, error } = await supabaseAdmin().rpc("recompute_usage_counters");
       if (error) throw error;
-      return Array.from(new Set((data ?? []).map((r) => r.tenant_id)));
+      return data as number; // returns the number of tenant rows inserted
     });
 
-    let reconciled = 0;
-    for (const tenantId of perTenant) {
-      const ok = await step.run(`reconcile-${tenantId}`, async () => {
-        const { error } = await supabaseAdmin().rpc("recompute_usage_counters", {
-          tenant_id: tenantId,
-        });
-        return !error;
-      });
-      if (ok) reconciled++;
-    }
-
-    logger.info("usage counters reconciled", { tenants: perTenant.length, reconciled });
-    return { tenants: perTenant.length, reconciled };
+    logger.info("usage counters reconciled", { reconciledRows: reconciled });
+    return { reconciledRows: reconciled };
   },
 );

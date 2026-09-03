@@ -45,8 +45,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { ErrorState, EmptyState, LoadingState } from "@/components/data-state";
-import { formatDateTime } from "@/lib/format";
-
+import { Progress } from "@/components/ui/progress";
+import { formatDateTime, formatCurrency } from "@/lib/format";
 interface TenantRow {
   id: string;
   name: string;
@@ -54,11 +54,13 @@ interface TenantRow {
   owner_email: string | null;
   created_at: string;
   max_businesses: number | null;
+  token_budget_topup: number;
 }
 interface PlanRow {
   id: string;
   name: string;
   is_active: boolean;
+  limits: Record<string, unknown>;
 }
 interface TenantMember {
   id: string;
@@ -73,9 +75,14 @@ interface Subscription {
   starts_at: string;
   ends_at: string | null;
 }
+interface TenantUsage {
+  tokens_used: number;
+  cost_usd: number;
+}
 interface TenantDetail extends TenantRow {
   members: TenantMember[];
   subscription: Subscription | null;
+  usage: TenantUsage | null;
 }
 
 const EDIT_STATUSES = ["active", "suspended", "archived"] as const;
@@ -110,6 +117,7 @@ export default function TenantsAdminPage() {
   const [editName, setEditName] = useState("");
   const [editStatus, setEditStatus] = useState("active");
   const [editMaxBusinesses, setEditMaxBusinesses] = useState("");
+  const [editTopup, setEditTopup] = useState("");
   const [saving, setSaving] = useState(false);
 
   // ── Active plans list ────────────────────────────────────────────────────
@@ -167,12 +175,14 @@ export default function TenantsAdminPage() {
     setSaving(true);
     try {
       const parsedLimit = editMaxBusinesses.trim() === "" ? null : parseInt(editMaxBusinesses, 10);
+      const parsedTopup = editTopup.trim() === "" ? 0 : parseInt(editTopup, 10);
       const res = await api<{ tenant: TenantDetail }>(`/api/admin/tenants/${detail.id}`, {
         method: "PATCH",
         body: JSON.stringify({ 
           name: editName.trim(), 
           status: editStatus,
-          max_businesses: parsedLimit 
+          max_businesses: parsedLimit,
+          token_budget_topup: parsedTopup,
         }),
       });
       setDetail(res.tenant);
@@ -249,10 +259,11 @@ export default function TenantsAdminPage() {
                         size="icon"
                         className="size-8"
                         onClick={() => {
-                          setDetail({ ...t, members: [], subscription: null });
+                          setDetail({ ...t, members: [], subscription: null, usage: null });
                           setEditName(t.name);
                           setEditStatus(t.status);
                           setEditMaxBusinesses(t.max_businesses === null ? "" : String(t.max_businesses));
+                          setEditTopup(t.token_budget_topup === 0 ? "" : String(t.token_budget_topup));
                           setEditOpen(true);
                         }}
                       >
@@ -366,6 +377,46 @@ export default function TenantsAdminPage() {
                   )}
                 </div>
 
+                {/* Usage */}
+                {(() => {
+                  let baseLimit = 100000;
+                  if (detail.subscription) {
+                    const p = activePlans.find((x) => x.id === detail.subscription?.plan_id);
+                    if (p && p.limits && typeof p.limits.token_budget_monthly === "number") {
+                      baseLimit = p.limits.token_budget_monthly;
+                    }
+                  }
+                  const effectiveLimit = baseLimit + detail.token_budget_topup;
+                  const tokensUsed = detail.usage?.tokens_used ?? 0;
+                  const costUsd = detail.usage?.cost_usd ?? 0;
+                  const pct = effectiveLimit > 0 ? Math.min(100, Math.round((tokensUsed / effectiveLimit) * 100)) : 0;
+
+                  return (
+                    <div className="space-y-3">
+                      <p className="text-sm font-medium text-muted-foreground">Usage this period</p>
+                      <div className="rounded-lg border p-3 space-y-3 text-sm">
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Tokens</span>
+                          <span className="font-medium">
+                            {tokensUsed.toLocaleString()} / {effectiveLimit.toLocaleString()}
+                          </span>
+                        </div>
+                        <Progress value={pct} className="h-2" />
+                        <div className="flex justify-between items-center text-xs text-muted-foreground">
+                          <span>Base: {baseLimit.toLocaleString()}</span>
+                          {detail.token_budget_topup > 0 && (
+                            <span className="text-primary font-medium">+{detail.token_budget_topup.toLocaleString()} top-up</span>
+                          )}
+                        </div>
+                        <div className="pt-2 border-t flex justify-between items-center">
+                          <span className="text-muted-foreground">Total cost</span>
+                          <span className="font-medium">{formatCurrency(costUsd, "USD", 4)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Members */}
                 <div>
                   <p className="mb-2 text-sm font-medium text-muted-foreground">
@@ -396,6 +447,7 @@ export default function TenantsAdminPage() {
                     setEditName(detail.name);
                     setEditStatus(detail.status);
                     setEditMaxBusinesses(detail.max_businesses === null ? "" : String(detail.max_businesses));
+                    setEditTopup(detail.token_budget_topup === 0 ? "" : String(detail.token_budget_topup));
                     setEditOpen(true);
                   }}
                 >
@@ -517,6 +569,19 @@ export default function TenantsAdminPage() {
               />
               <p className="text-xs text-muted-foreground">
                 Leave empty for unlimited.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-topup">Extra token top-up</Label>
+              <Input
+                id="edit-topup"
+                type="number"
+                placeholder="0"
+                value={editTopup}
+                onChange={(e) => setEditTopup(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Tokens added on top of the plan&apos;s base limit.
               </p>
             </div>
           </div>

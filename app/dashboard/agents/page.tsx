@@ -25,6 +25,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ErrorState, EmptyState, LoadingState } from "@/components/data-state";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { MODELS, DEFAULT_MODEL } from "@/lib/agents/models";
 import type { AgentRow } from "@/lib/api/types";
 
 export default function AgentsPage() {
@@ -37,6 +47,7 @@ export default function AgentsPage() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [type, setType] = useState("receptionist");
+  const [model, setModel] = useState(DEFAULT_MODEL);
   const [creating, setCreating] = useState(false);
 
   async function create() {
@@ -45,7 +56,7 @@ export default function AgentsPage() {
     try {
       const res = await api<{ agent: AgentRow }>(`/api/tenants/${tenantId}/agents`, {
         method: "POST",
-        body: JSON.stringify({ name: name.trim(), type }),
+        body: JSON.stringify({ name: name.trim(), type, model_config: { model } }),
       });
       toast.success("Agent created");
       setOpen(false);
@@ -110,6 +121,29 @@ export default function AgentsPage() {
                 />
                 <p className="text-xs text-muted-foreground">
                   The type is a label for your own organization — instructions are what shape behavior.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="agent-model">Model</Label>
+                <Select value={model} onValueChange={setModel}>
+                  <SelectTrigger id="agent-model" className="w-full">
+                    <SelectValue placeholder="Select a model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Array.from(new Set(MODELS.map((m) => m.group))).map((group) => (
+                      <SelectGroup key={group}>
+                        <SelectLabel>{group}</SelectLabel>
+                        {MODELS.filter((m) => m.group === group).map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Can be changed later on the edit page.
                 </p>
               </div>
             </div>

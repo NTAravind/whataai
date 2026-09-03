@@ -29,6 +29,16 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { ErrorState, LoadingState } from "@/components/data-state";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { MODELS, DEFAULT_MODEL } from "@/lib/agents/models";
 import type { AgentRow } from "@/lib/api/types";
 
 const TOOL_LABELS: Record<string, string> = {
@@ -62,6 +72,7 @@ export default function AgentEditorPage() {
   const [name, setName] = useState("");
   const [type, setType] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [model, setModel] = useState(DEFAULT_MODEL);
   const [enabled, setEnabled] = useState(true);
   const [tools, setTools] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -73,6 +84,7 @@ export default function AgentEditorPage() {
     setName(data.agent.name);
     setType(data.agent.type);
     setInstructions(data.agent.instructions ?? "");
+    setModel((data.agent.model_config?.model as string | undefined) ?? DEFAULT_MODEL);
     setEnabled(data.agent.enabled);
     setTools(data.agent.tools ?? []);
     setDirty(false);
@@ -96,7 +108,7 @@ export default function AgentEditorPage() {
     try {
       await api(`/api/tenants/${tenantId}/agents/${agentId}`, {
         method: "PATCH",
-        body: JSON.stringify({ name, type, instructions, enabled, tools }),
+        body: JSON.stringify({ name, type, instructions, model_config: { model }, enabled, tools }),
       });
       toast.success("Agent saved");
       setDirty(false);
@@ -155,6 +167,29 @@ export default function AgentEditorPage() {
               <Label htmlFor="type">Type</Label>
               <Input id="type" value={type} onChange={(e) => { setType(e.target.value); setDirty(true); }} />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="model">Model</Label>
+            <Select value={model} onValueChange={(v) => { setModel(v); setDirty(true); }}>
+              <SelectTrigger id="model" className="w-full">
+                <SelectValue placeholder="Select a model" />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from(new Set(MODELS.map((m) => m.group))).map((group) => (
+                  <SelectGroup key={group}>
+                    <SelectLabel>{group}</SelectLabel>
+                    {MODELS.filter((m) => m.group === group).map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              The AI model powering this agent&apos;s conversations. Flash models are cheaper and faster.
+            </p>
           </div>
           <div className="flex items-center justify-between rounded-lg border p-3">
             <div>

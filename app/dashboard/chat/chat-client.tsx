@@ -18,6 +18,16 @@ import { Input } from "@/components/ui/input";
 import { Plus, MessageSquare, Loader2, Send, Bot, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { MODELS, DEFAULT_MODEL } from "@/lib/agents/models";
 
 export function ChatClient() {
   const { tenant } = useTenant();
@@ -38,6 +48,8 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [input, setInput] = useState("");
+  const [model, setModel] = useState(DEFAULT_MODEL);
+  const modelRef = useRef(DEFAULT_MODEL);
   const [isHistoryOpen, setIsHistoryOpen] = useState(true);
 
   const loadSessions = useCallback(async () => {
@@ -45,9 +57,10 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
     try {
       const res = await fetch(`/api/tenants/${tenantId}/chat/sessions`);
       const data = await res.json();
+      console.log(`[chat-client] Refreshed ${data.sessions?.length ?? 0} sessions`);
       setSessions(data.sessions ?? []);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error(`[chat-client] Failed to refresh sessions:`, err);
     }
   }, [tenantId]);
 
@@ -56,11 +69,18 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
   useEffect(() => {
     const t = new DefaultChatTransport({
       api: `/api/tenants/${tenantId}/chat`,
-      body: () => ({ sessionId: currentSessionIdRef.current ?? undefined }),
+      body: () => ({ sessionId: currentSessionIdRef.current ?? undefined, model: modelRef.current }),
       fetch: async (input, init) => {
+        console.log(`[chat-client] Fetching ${input}`, { method: init?.method, bodyLength: (init?.body as string)?.length });
         const response = await fetch(input, init);
+        console.log(`[chat-client] Response status: ${response.status}, ok: ${response.ok}`);
+        if (!response.ok) {
+          const text = await response.text().catch(() => "unable to read body");
+          console.error(`[chat-client] Error response body:`, text);
+        }
         const newSessionId = response.headers.get("x-session-id");
         if (newSessionId && newSessionId !== currentSessionIdRef.current) {
+          console.log(`[chat-client] New session ID: ${newSessionId}`);
           currentSessionIdRef.current = newSessionId;
           setCurrentSessionId(newSessionId);
           loadSessions();
@@ -73,10 +93,17 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
 
   const { messages, setMessages, status, sendMessage } = useChat({
     transport: transport ?? undefined,
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      console.error("[chat-client] useChat error:", err);
+      toast.error(`Copilot error: ${err.message}`);
+    },
   });
 
   const isLoading = status === "streaming" || status === "submitted";
+
+  useEffect(() => {
+    console.log(`[chat-client] Status changed: ${status}`);
+  }, [status]);
 
   const loadSessionHistory = async (id: string) => {
     if (!tenantId) return;
@@ -85,6 +112,7 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
     try {
       const res = await fetch(`/api/tenants/${tenantId}/chat/sessions?sessionId=${id}`);
       const data = await res.json();
+      console.log(`[chat-client] Loaded session ${id}: ${data.history?.length ?? 0} messages`);
       // API returns ModelMessage[]; map to UIMessage[] for useChat
       const history: UIMessage[] = (data.history ?? []).map(
         (msg: { role: string; content: unknown }, i: number) => ({
@@ -102,7 +130,8 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
         }),
       );
       setMessages(history);
-    } catch {
+    } catch (err) {
+      console.error(`[chat-client] Failed to load session ${id}:`, err);
       toast.error("Failed to load chat history");
     }
   };
@@ -113,10 +142,11 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
     fetch(`/api/tenants/${tenantId}/chat/sessions`)
       .then((res) => res.json())
       .then((data) => {
+        console.log(`[chat-client] Loaded ${data.sessions?.length ?? 0} sessions`);
         if (!cancelled) setSessions(data.sessions ?? []);
       })
-      .catch(() => {
-        /* ignore */
+      .catch((err) => {
+        console.error(`[chat-client] Failed to load sessions:`, err);
       });
     return () => {
       cancelled = true;
@@ -128,8 +158,13 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    console.log(`[chat-client] Messages updated: ${messages.length} total, latest role=${messages[messages.length - 1]?.role ?? "none"}`);
+  }, [messages]);
+
   const handleApproveTemplate = (template: PendingTemplatePayload) => {
     if (!sendMessage) return;
+    console.log(`[chat-client] Sending template approval for: ${template.name}`);
     sendMessage({
       text: `Template "${template.name}" has been approved by the operator. Please confirm that it has been submitted to Meta and proceed with the next steps.`
     });
@@ -137,12 +172,38 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
 
   const handleEditTemplate = (feedback: string) => {
     if (!sendMessage) return;
+    console.log(`[chat-client] Sending template edit feedback`);
     sendMessage({
       text: `Please update the template: ${feedback}. Show me a new preview.`
     });
   };
 
-  const extractPendingPreview = (text: string): PendingTemplatePayload | null => {
+  const extractPendingPreview = (m: UIMessage): PendingTemplatePayload | null => {
+    // Prefer the create_template tool output part (multi-step agent stream).
+    for (const part of m.parts) {
+      if (typeof part.type !== "string" || !part.type.startsWith("tool-")) continue;
+      const tool = part as ToolUIPart;
+      if (getToolName(tool) !== "create_template" || tool.state !== "output-available") {
+        continue;
+      }
+      const output = tool.output as { __type?: string; template?: PendingTemplatePayload };
+      if (output?.__type === "PENDING_PREVIEW" && output.template) {
+        return output.template;
+      }
+      // Some versions stringify the output.
+      if (output && typeof output !== "object" && String(output).includes("PENDING_PREVIEW")) {
+        try {
+          const parsed = JSON.parse(String(output));
+          if (parsed.__type === "PENDING_PREVIEW") return parsed.template;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    // Fallback: the assistant's rendered text may still contain the JSON.
+    const text =
+      m.parts.find((p) => p.type === "text" && "text" in p)?.text ?? "";
     const match = text.match(/\{[\s\S]*"__type"\s*:\s*"PENDING_PREVIEW"[\s\S]*\}/);
     if (!match) return null;
     try {
@@ -212,11 +273,36 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
               <PanelLeftOpen className="h-4 w-4 text-muted-foreground" />
             </Button>
           )}
-          <h2 className="text-sm font-medium">
+          <h2 className="text-sm font-medium min-w-0 truncate">
             {currentSessionId 
               ? sessions.find(s => s.id === currentSessionId)?.title ?? "Chat Session"
               : "New Chat"}
           </h2>
+          <div className="ml-auto">
+            <Select
+              value={model}
+              onValueChange={(v) => {
+                modelRef.current = v;
+                setModel(v);
+              }}
+            >
+              <SelectTrigger className="h-8 w-auto min-w-[12rem] text-xs">
+                <SelectValue placeholder="Model" />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from(new Set(MODELS.map((m) => m.group))).map((group) => (
+                  <SelectGroup key={group}>
+                    <SelectLabel>{group}</SelectLabel>
+                    {MODELS.filter((m) => m.group === group).map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </header>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.length === 0 ? (
@@ -253,7 +339,7 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
               );
 
               const pendingPreview =
-                m.role === "assistant" ? extractPendingPreview(textContent) : null;
+                m.role === "assistant" ? extractPendingPreview(m) : null;
 
               if (pendingPreview) {
                 return (
@@ -323,6 +409,7 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
             onSubmit={(e) => {
               e.preventDefault();
               if (!input.trim() || !sendMessage) return;
+              console.log(`[chat-client] Sending message: "${input.substring(0, 50)}..."`);
               sendMessage({ text: input });
               setInput("");
             }}

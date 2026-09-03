@@ -1,29 +1,32 @@
-import { ModelMessage, streamText } from "ai";
+import { ToolLoopAgent } from "ai";
 import { buildTenantAgentTools } from "./tenant-tools";
 import { google } from "@ai-sdk/google";
 import { getBusinessContextPrompt } from "@/lib/services/businesses";
+import { DEFAULT_MODEL } from "./models";
 
-export interface StreamTenantAgentInput {
+export interface TenantAgentOptions {
   tenantId: string;
-  messages: ModelMessage[];
-  history: ModelMessage[];
-  onFinish?: (event: any) => Promise<void> | void;
+  model?: string;
 }
 
-export async function streamTenantAgent({
+export async function buildTenantAgent({
   tenantId,
-  messages,
-  history,
-  onFinish,
-}: StreamTenantAgentInput) {
+  model,
+}: TenantAgentOptions) {
+  const chosenModel = model ?? DEFAULT_MODEL;
+  console.log(`[tenant-runtime] Building agent for tenant ${tenantId}, model=${chosenModel}`);
+
   const tools = buildTenantAgentTools(tenantId);
+  console.log(`[tenant-runtime] Available tools: ${Object.keys(tools).join(", ")}`);
 
   // Try to load business context if they have one
   let businessContext = "";
   try {
     const ctx = await getBusinessContextPrompt(tenantId);
     businessContext = `\nBusiness Context:\n${ctx.prompt}\nTimezone: ${ctx.timezone}`;
-  } catch {
+    console.log(`[tenant-runtime] Business context loaded (prompt length: ${ctx.prompt.length})`);
+  } catch (err) {
+    console.warn(`[tenant-runtime] Failed to load business context:`, err);
     businessContext = "\nBusiness Context: Not configured yet.";
   }
 
@@ -56,11 +59,16 @@ Tell the user: "Here is a preview of the template. Approve it or tell me what to
 Do NOT output the raw JSON verbatim — the UI intercepts and renders it as a preview.
 `;
 
-  return streamText({
-    model: google("gemini-1.5-pro"),
-    system: systemPrompt,
-    messages: [...history, ...messages],
+  // ToolLoopAgent runs the full multi-step tool loop (defaults to up to 20
+  // steps), continuing through tool calls until it produces final text. This
+  // is what was missing — a single streamText call stops after one step, so
+  // a response that was only a tool call produced no visible text.
+  const agent = new ToolLoopAgent({
+    model: google(chosenModel),
+    instructions: systemPrompt,
     tools,
-    onFinish,
   });
+
+  console.log(`[tenant-runtime] Agent built`);
+  return agent;
 }
