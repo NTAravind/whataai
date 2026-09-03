@@ -176,7 +176,7 @@ export default function TenantsAdminPage() {
     try {
       const parsedLimit = editMaxBusinesses.trim() === "" ? null : parseInt(editMaxBusinesses, 10);
       const parsedTopup = editTopup.trim() === "" ? 0 : parseInt(editTopup, 10);
-      const res = await api<{ tenant: TenantDetail }>(`/api/admin/tenants/${detail.id}`, {
+      await api(`/api/admin/tenants/${detail.id}`, {
         method: "PATCH",
         body: JSON.stringify({ 
           name: editName.trim(), 
@@ -185,9 +185,9 @@ export default function TenantsAdminPage() {
           token_budget_topup: parsedTopup,
         }),
       });
-      setDetail(res.tenant);
       setEditOpen(false);
       toast.success("Tenant updated");
+      await openDetail(detail);
       tenants.reload();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update tenant");
@@ -420,13 +420,13 @@ export default function TenantsAdminPage() {
                 {/* Members */}
                 <div>
                   <p className="mb-2 text-sm font-medium text-muted-foreground">
-                    Members ({detail.members.length})
+                    Members ({detail.members?.length ?? 0})
                   </p>
-                  {detail.members.length === 0 ? (
+                  {(detail.members?.length ?? 0) === 0 ? (
                     <p className="text-sm text-muted-foreground italic">No members yet.</p>
                   ) : (
                     <div className="space-y-2">
-                      {detail.members.map((m) => (
+                      {detail.members?.map((m) => (
                         <div
                           key={m.id}
                           className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"

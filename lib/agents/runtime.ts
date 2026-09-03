@@ -2,6 +2,7 @@ import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { buildAgentGraph } from "./graph/graph";
 import { buildSupervisorGraph } from "./graph/supervisor";
 import { calculateCost } from "./pricing";
+import { DEFAULT_MODEL } from "./provider";
 import type { ModelMessage } from "ai";
 import type { AgentToolCtx } from "./registry";
 
@@ -34,8 +35,6 @@ export interface AgentRunResult {
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
   cost: number;
 }
-
-const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 
 type GraphMessage = {
   content?: unknown;

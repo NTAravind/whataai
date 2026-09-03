@@ -1,8 +1,7 @@
 import { ToolLoopAgent } from "ai";
 import { buildTenantAgentTools } from "./tenant-tools";
-import { google } from "@ai-sdk/google";
 import { getBusinessContextPrompt } from "@/lib/services/businesses";
-import { DEFAULT_MODEL } from "./models";
+import { DEFAULT_MODEL, getAISDKModel } from "./provider";
 
 export interface TenantAgentOptions {
   tenantId: string;
@@ -64,7 +63,7 @@ Do NOT output the raw JSON verbatim — the UI intercepts and renders it as a pr
   // is what was missing — a single streamText call stops after one step, so
   // a response that was only a tool call produced no visible text.
   const agent = new ToolLoopAgent({
-    model: google(chosenModel),
+    model: getAISDKModel(chosenModel),
     instructions: systemPrompt,
     tools,
   });

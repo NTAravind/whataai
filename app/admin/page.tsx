@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Boxes, Building2, CreditCard, UserPlus } from "lucide-react";
+import { Boxes, Building2, CreditCard, LayoutDashboard, UserPlus } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -142,6 +142,26 @@ export default function AdminOverviewPage() {
                 })}
               </TableBody>
             </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="mt-8">
+        <Card className="border-dashed bg-muted/30">
+          <CardHeader>
+            <CardTitle className="text-base text-muted-foreground flex items-center gap-2">
+              <LayoutDashboard className="size-4" />
+              Tenant Dashboard Preview
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="rounded-full bg-muted p-3 mb-4">
+              <LayoutDashboard className="size-6 text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium">Dashboard Preview Placeholder</h3>
+            <p className="text-sm text-muted-foreground max-w-sm mt-2">
+              A read-only view of the tenant's dashboard will be displayed here, allowing admins to assist customers and view metrics.
+            </p>
           </CardContent>
         </Card>
       </div>

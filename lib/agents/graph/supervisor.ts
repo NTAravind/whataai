@@ -1,11 +1,11 @@
 import { StateGraph, START, END, Annotation } from "@langchain/langgraph";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { AgentState } from "./state";
 import { createAgentNode, createToolNode, buildSystemPrompt } from "./nodes";
 import { buildLangChainTools } from "./tools";
 import { nextAfterTools, shouldContinue } from "./edges";
 import type { AgentToolCtx } from "@/lib/agents/registry";
+import { DEFAULT_MODEL, getLangChainModel } from "../provider";
 
 const SupervisorState = Annotation.Root({
   ...AgentState.spec,
@@ -21,34 +21,30 @@ const ROUTE_MAP: Record<string, { tools: string[]; prompt: string; model?: strin
     prompt: `You are a FAQ specialist. Answer customer questions using the knowledge base.
 Search the KB first. If you can't find the answer, escalate to a human.
 Never invent business facts.`,
-    model: "gemini-3.1-flash-lite",
+    model: DEFAULT_MODEL,
   },
   booking: {
     tools: ["check_availability", "create_booking", "cancel_booking", "list_resources", "schedule_reminder", "get_current_datetime", "escalate_to_human"],
     prompt: `You are a booking specialist. Help customers book, reschedule, or cancel appointments.
 Always check availability before suggesting times. After creating a booking, schedule a reminder.`,
-    model: "gemini-1.5-pro",
+    model: DEFAULT_MODEL,
   },
   template: {
     tools: ["list_templates", "send_template", "list_flows", "trigger_flow", "escalate_to_human"],
     prompt: `You are a WhatsApp template specialist. Help customers interact with templates and flows.
 Use list_templates to see what's available before sending.`,
-    model: "gemini-3.1-flash-lite",
+    model: DEFAULT_MODEL,
   },
   escalation: {
     tools: ["escalate_to_human"],
     prompt: `You are an escalation specialist. The customer needs to talk to a human.
 Use escalate_to_human immediately with a clear reason.`,
-    model: "gemini-3.1-flash-lite",
+    model: DEFAULT_MODEL,
   },
 };
 
 function createSupervisorNode(modelName: string) {
-  const llm = new ChatGoogleGenerativeAI({
-    model: modelName,
-    temperature: 0,
-    apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-  });
+  const llm = getLangChainModel(modelName, 0);
 
   return async (state: typeof SupervisorState.State) => {
     const lastMessage = state.messages[state.messages.length - 1];
@@ -82,7 +78,7 @@ export async function buildSupervisorGraph(input: {
   enabledTools: string[];
   ctx: AgentToolCtx;
 }) {
-  const supervisorNode = createSupervisorNode("gemini-3.1-flash-lite");
+  const supervisorNode = createSupervisorNode(DEFAULT_MODEL);
 
   const subAgentNodes: Record<string, ReturnType<typeof createAgentNode>> = {};
   const subAgentToolNodes: Record<string, ReturnType<typeof createToolNode>> = {};
@@ -98,13 +94,13 @@ export async function buildSupervisorGraph(input: {
     );
 
     subAgentNodes[category] = createAgentNode(
-      config.model ?? "gemini-3.1-flash-lite",
+      config.model ?? DEFAULT_MODEL,
       systemPrompt,
       lcTools,
     );
     subAgentToolNodes[category] = createToolNode(lcTools);
     finalAgentNodes[category] = createAgentNode(
-      config.model ?? "gemini-3.1-flash-lite",
+      config.model ?? DEFAULT_MODEL,
       `${systemPrompt}\n\nYou have completed the available tool actions. Give the customer a concise final response based on the conversation and tool results. Do not call any tools.`,
       [],
     );

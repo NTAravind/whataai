@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MODELS, DEFAULT_MODEL } from "@/lib/agents/models";
+import { MODELS, DEFAULT_MODEL } from "@/lib/agents/provider";
 
 export function ChatClient() {
   const { tenant } = useTenant();

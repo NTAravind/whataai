@@ -122,7 +122,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const inAdmin = pathname.startsWith("/admin");
 
   return (
-    <div className="flex min-h-screen bg-muted/30">
+    <div className="flex min-h-screen bg-[#f7f7f4] dark:bg-background">
       <aside
         className={cn(
           "sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-background p-3 lg:flex transition-all duration-300",
@@ -131,10 +131,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="flex items-center justify-between px-2 py-2">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-[#25D366] text-black">
               <MessageSquareText className="size-4" />
             </div>
-            <span className="font-semibold tracking-tight whitespace-nowrap">Whata AI</span>
+            <span className="text-xl font-black tracking-[-0.07em] whitespace-nowrap text-[#111] dark:text-white">What<span className="text-[#25D366]">AI</span><span className="text-[#25D366]">.</span></span>
           </Link>
           <Button variant="ghost" size="icon" onClick={() => setIsSidebarOpen(false)} className="h-8 w-8 shrink-0">
             <PanelLeftClose className="size-4" />
@@ -223,11 +223,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
 
         <header className="flex items-center justify-between gap-4 border-b bg-background/80 px-4 py-3 backdrop-blur lg:hidden">
-          <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
-            <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
+          <Link href="/dashboard" className="flex items-center gap-2">
+            <div className="flex size-7 items-center justify-center rounded-md bg-[#25D366] text-black">
               <MessageSquareText className="size-4" />
             </div>
-            Whata AI
+            <span className="text-xl font-black tracking-[-0.07em] whitespace-nowrap text-[#111] dark:text-white">What<span className="text-[#25D366]">AI</span><span className="text-[#25D366]">.</span></span>
           </Link>
           <div className="flex items-center gap-2">
             <TenantSwitcher compact />

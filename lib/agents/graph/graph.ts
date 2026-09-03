@@ -4,6 +4,7 @@ import { createAgentNode, createToolNode, buildSystemPrompt } from "./nodes";
 import { buildLangChainTools } from "./tools";
 import { nextAfterTools, shouldContinue } from "./edges";
 import type { AgentToolCtx } from "@/lib/agents/registry";
+import { DEFAULT_MODEL } from "../provider";
 
 export interface BuildGraphInput {
   agent: {
@@ -18,7 +19,7 @@ export async function buildAgentGraph(input: BuildGraphInput) {
   const modelName =
     (input.agent.model_config?.model as string | undefined) ??
     process.env.AI_MODEL ??
-    "gemini-3.1-flash-lite";
+    DEFAULT_MODEL;
 
   const lcTools = buildLangChainTools(input.agent.tools, input.ctx);
   const systemPrompt = await buildSystemPrompt(

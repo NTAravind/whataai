@@ -38,7 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MODELS, DEFAULT_MODEL } from "@/lib/agents/models";
+import { MODELS, DEFAULT_MODEL } from "@/lib/agents/provider";
 import type { AgentRow } from "@/lib/api/types";
 
 const TOOL_LABELS: Record<string, string> = {

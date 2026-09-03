@@ -13,7 +13,7 @@ import { MessageSquareText } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,6 +60,27 @@ export default function LoginPage() {
     }
   }
 
+  async function handleForgotPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email) {
+      toast.error("Enter your email first.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await getSupabaseBrowser().auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/update-password`,
+      });
+      if (error) throw error;
+      toast.success("Reset email sent — check your inbox.");
+      setMode("signin");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send reset email");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
       <div className="w-full max-w-sm">
@@ -72,16 +93,22 @@ export default function LoginPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">
-              {mode === "signin" ? "Sign in" : "Create an account"}
+              {mode === "signin"
+                ? "Sign in"
+                : mode === "signup"
+                  ? "Create an account"
+                  : "Reset your password"}
             </CardTitle>
             <CardDescription>
               {mode === "signin"
                 ? "Use the email your tenant was set up with."
-                : "Your account must be added to a tenant by an admin."}
+                : mode === "signup"
+                  ? "Your account must be added to a tenant by an admin."
+                  : "We'll email you a link to set a new password."}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={mode === "forgot" ? handleForgotPassword : handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -94,20 +121,37 @@ export default function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  required
-                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
+              {mode !== "forgot" && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Password</Label>
+                    {mode === "signin" && (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                        onClick={() => setMode("forgot")}
+                      >
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
+                  <Input
+                    id="password"
+                    type="password"
+                    required
+                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              )}
               <Button type="submit" className="w-full" disabled={busy}>
                 {busy ? <Spinner className="size-4" /> : null}
-                {mode === "signin" ? "Sign in" : "Create account"}
+                {mode === "signin"
+                  ? "Sign in"
+                  : mode === "signup"
+                    ? "Create account"
+                    : "Send reset link"}
               </Button>
             </form>
             <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
@@ -119,14 +163,29 @@ export default function LoginPage() {
               Send magic link
             </Button>
             <p className="mt-4 text-center text-sm text-muted-foreground">
-              {mode === "signin" ? "No account?" : "Already have one?"}{" "}
-              <button
-                type="button"
-                className="font-medium text-foreground underline underline-offset-4"
-                onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-              >
-                {mode === "signin" ? "Create one" : "Sign in"}
-              </button>
+              {mode === "forgot" ? (
+                <>
+                  Remembered it?{" "}
+                  <button
+                    type="button"
+                    className="font-medium text-foreground underline underline-offset-4"
+                    onClick={() => setMode("signin")}
+                  >
+                    Sign in
+                  </button>
+                </>
+              ) : (
+                <>
+                  {mode === "signin" ? "No account?" : "Already have one?"}{" "}
+                  <button
+                    type="button"
+                    className="font-medium text-foreground underline underline-offset-4"
+                    onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
+                  >
+                    {mode === "signin" ? "Create one" : "Sign in"}
+                  </button>
+                </>
+              )}
             </p>
           </CardContent>
         </Card>

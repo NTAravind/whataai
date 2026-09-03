@@ -1,10 +1,10 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { AIMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { AgentState } from "./state";
 import { buildLangChainTools } from "./tools";
 import { getBusinessContextPrompt } from "@/lib/services/businesses";
 import { requiresApproval, storePendingAction } from "./hitl";
+import { getLangChainModel } from "../provider";
 
 function buildDateTimeBlock(timezone: string): string {
   const now = new Date();
@@ -58,11 +58,7 @@ export function createAgentNode(
   systemPrompt: string,
   lcTools: ReturnType<typeof buildLangChainTools>,
 ) {
-  const model = new ChatGoogleGenerativeAI({
-    model: modelName,
-    temperature: 0.7,
-    apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-  });
+  const model = getLangChainModel(modelName, 0.7);
   const llm = lcTools.length > 0 ? model.bindTools(lcTools) : model;
 
   return async (state: typeof AgentState.State) => {
