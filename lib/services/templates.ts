@@ -57,6 +57,70 @@ export async function getWaAccount(waAccountId: string, tenantId: string) {
   );
 }
 
+/**
+ * Find the approved template used for booking reminders: the newest approved
+ * template whose name contains "reminder" (e.g. booking_reminder,
+ * appointment_reminder). Returns null when none exists so callers fall back.
+ */
+export async function findReminderTemplate(
+  tenantId: string,
+  waAccountId: string,
+): Promise<TemplateRow | null> {
+  const { data, error } = await supabaseAdmin()
+    .from("whatsapp_templates")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("wa_account_id", waAccountId)
+    .eq("status", "approved")
+    .ilike("name", "%reminder%")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn("[templates] findReminderTemplate query failed:", error);
+    return null;
+  }
+  return (data as TemplateRow | null) ?? null;
+}
+
+export interface ReminderTemplateData {
+  customerName: string;
+  serviceName: string;
+  dateLabel: string;
+}
+
+/**
+ * Build an outbound template payload for a reminder. Reads the template's
+ * BODY placeholders ({{1}}, {{2}}, …) and fills them positionally:
+ * {{1}}=customer name, {{2}}=service name, {{3}}=date/time label.
+ * Returns null when the template has no BODY component.
+ */
+export function buildReminderTemplateContent(
+  template: TemplateRow,
+  data: ReminderTemplateData,
+): { content: { type: "template"; meta: { template_id: string; parameters?: string[] } }; templateId: string } | null {
+  const body = (template.components ?? []).find(
+    (c) => (c as Record<string, unknown>).type === "BODY",
+  ) as (Record<string, unknown> & { text?: string }) | undefined;
+  if (!body || typeof body.text !== "string") return null;
+
+  const indices = [...body.text.matchAll(/\{\{(\d+)\}\}/g)].map((m) => parseInt(m[1], 10));
+  const placeholderCount = indices.length ? Math.max(...indices) : 0;
+  if (placeholderCount === 0) {
+    return {
+      content: { type: "template", meta: { template_id: template.id } },
+      templateId: template.id,
+    };
+  }
+
+  const values = [data.customerName, data.serviceName, data.dateLabel];
+  const parameters = Array.from({ length: placeholderCount }, (_, i) => values[i] ?? "");
+  return {
+    content: { type: "template", meta: { template_id: template.id, parameters } },
+    templateId: template.id,
+  };
+}
+
 export interface CreateTemplateInput {
   tenantId: string;
   waAccountId: string;
@@ -111,6 +175,9 @@ export async function createTemplate(input: CreateTemplateInput) {
       subCategory: input.subCategory,
       messageSendTtlSeconds: input.messageSendTtlSeconds,
     });
+    if (!metaRes || typeof metaRes.id !== "string" || !metaRes.id) {
+      throw new Error("Meta returned no template id — submission did not complete.");
+    }
     await admin
       .from("whatsapp_templates")
       .update({ meta_template_id: metaRes.id })
@@ -135,8 +202,13 @@ export async function deleteTemplate(templateId: string, tenantId: string) {
     if (wa.wa_business_account_id) {
       await meta.deleteTemplate(wa.wa_business_account_id, template.name);
     }
-  } catch {
-    // Meta may already not know about it (e.g. never submitted) — proceed.
+  } catch (err) {
+    // Meta may already not know about it (e.g. never submitted). Log so a
+    // silent failure is visible rather than swallowed outright.
+    console.warn(
+      `[templates] Meta delete failed for template "${template.name}" (wa_account ${template.wa_account_id}):`,
+      err
+    );
   }
   await admin.from("whatsapp_templates").delete().eq("id", templateId).eq("tenant_id", tenantId);
   return true;
@@ -172,9 +244,17 @@ export async function applyTemplateStatusUpdate(input: {
       .maybeSingle();
     accountId = wa?.id ?? input.waAccountId;
   }
-  if (!accountId) return;
+  if (!accountId) {
+    console.warn(
+      `[templates] applyTemplateStatusUpdate: no wa_account matched for ${JSON.stringify({
+        wabaId: input.wabaBusinessAccountId ?? undefined,
+        waAccountId: input.waAccountId ?? undefined,
+      })}; template "${input.name}" status update ignored.`,
+    );
+    return;
+  }
 
-  return admin
+  const { data, error } = await admin
     .from("whatsapp_templates")
     .update({
       status: input.status.toLowerCase(),
@@ -182,7 +262,21 @@ export async function applyTemplateStatusUpdate(input: {
       ...(input.metaTemplateId ? { meta_template_id: input.metaTemplateId } : {}),
     })
     .eq("wa_account_id", accountId)
-    .eq("name", input.name);
+    .ilike("name", input.name)
+    .select("id");
+
+  if (error) {
+    console.error("[templates] applyTemplateStatusUpdate update failed:", error);
+  } else if (!data || data.length === 0) {
+    // This is the silent-failure class where a template stays stuck in
+    // "pending" because the incoming name didn't exactly match a local row.
+    console.warn(
+      `[templates] applyTemplateStatusUpdate: no local template matched for wa_account=${accountId} name="${input.name}" status="${input.status}". ` +
+        "Template may remain stuck in pending. Check name normalization (case/underscores).",
+    );
+  }
+
+  return { matched: data ? data.length : 0 };
 }
 
 export async function pullTemplatesFromMeta(tenantId: string, waAccountId: string) {

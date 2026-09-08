@@ -21,6 +21,7 @@ export interface ResourceRow {
   type: string;
   name: string;
   capacity: number | null;
+  metadata: Record<string, unknown>;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -179,6 +180,60 @@ export async function createResource(input: {
     .single();
   if (error) throw error;
   return data as ResourceRow;
+}
+
+export async function getResource(tenantId: string, resourceId: string) {
+  return unwrap<ResourceRow>(
+    await supabaseAdmin()
+      .from("resources")
+      .select("*, business:businesses!inner(id, tenant_id)")
+      .eq("id", resourceId)
+      .eq("business.tenant_id", tenantId)
+      .maybeSingle(),
+  );
+}
+
+export async function updateResource(
+  tenantId: string,
+  resourceId: string,
+  input: {
+    name?: string;
+    type?: string;
+    capacity?: number | null;
+    metadata?: Record<string, unknown>;
+    enabled?: boolean;
+  },
+) {
+  const current = await getResource(tenantId, resourceId);
+
+  const patch: Record<string, unknown> = {};
+  if (input.name !== undefined) patch.name = input.name;
+  if (input.type !== undefined) patch.type = input.type;
+  if (input.capacity !== undefined) patch.capacity = input.capacity;
+  if (input.metadata !== undefined) patch.metadata = input.metadata;
+  if (input.enabled !== undefined) patch.enabled = input.enabled;
+  if (Object.keys(patch).length === 0) return current;
+
+  const { data, error } = await supabaseAdmin()
+    .from("resources")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", resourceId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as ResourceRow;
+}
+
+export async function deleteResource(tenantId: string, resourceId: string) {
+  const admin = supabaseAdmin();
+  await getResource(tenantId, resourceId); // 404 if not in this tenant
+
+  // deepest children first (FK ordering: resource_id on all three)
+  await admin.from("availability_exceptions").delete().eq("resource_id", resourceId);
+  await admin.from("availability_rules").delete().eq("resource_id", resourceId);
+  await admin.from("bookings").delete().eq("resource_id", resourceId);
+  const { error } = await admin.from("resources").delete().eq("id", resourceId);
+  if (error) throw error;
 }
 
 export async function listAvailabilityRules(tenantId: string) {

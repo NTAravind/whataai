@@ -2,13 +2,16 @@ import { inngest } from "@/lib/clients/ingest";
 import { cron } from "inngest";
 import { supabaseAdmin } from "@/lib/clients/supabase";
 import { messageOutboundSend } from "@/lib/inngest/events";
+import { findReminderTemplate, buildReminderTemplateContent } from "@/lib/services/templates";
 
 /**
  * Booking reminders (docs/api-guide.md — appointment flows, next day).
  *
  * Daily scan: for every confirmed booking starting in ~24-30h that hasn't
  * had a reminder yet, re-emit a durable WhatsApp/mail outbound send. Guarded
- * by bookings.reminder_sent_at so retries can't double-notify.
+ * by bookings.reminder_sent_at so retries can't double-notify. WhatsApp
+ * reminders use an approved "reminder" template when one exists, falling
+ * back to plain text (mail always uses plain text).
  */
 export const bookingReminder = inngest.createFunction(
   {
@@ -26,7 +29,7 @@ export const bookingReminder = inngest.createFunction(
       const { data, error } = await supabaseAdmin()
         .from("bookings")
         .select(
-          "id, tenant_id, start_time, contact:contacts(id, phone_number, email, full_name)",
+          "id, tenant_id, start_time, contact:contacts(id, phone_number, email, full_name), service:services(name)",
         )
         .eq("status", "confirmed")
         .is("reminder_sent_at", null)
@@ -70,16 +73,42 @@ export const bookingReminder = inngest.createFunction(
         channel === "whatsapp" ? contact.phone_number : contact.email;
       if (!channelAccountId || !senderId) continue;
 
+      const service = booking.service as unknown as
+        | { name: string }
+        | { name: string }[]
+        | null;
+      const serviceObj = Array.isArray(service) ? service[0] : service;
+      const serviceName = serviceObj?.name ?? "your appointment";
+      const firstName = contact.full_name?.trim().split(/\s+/)[0] ?? "";
+      const fallbackText = `Reminder: you have a booking on ${dateLabel}. Reply if you need to reschedule.`;
+
+      // Prefer an approved "reminder" template for WhatsApp; mail reminders
+      // fall back to plain text (mail has no templates).
+      let templatePayload: Awaited<ReturnType<typeof buildReminderTemplateContent>> = null;
+      if (channel === "whatsapp") {
+        templatePayload = await step.run(`resolve-reminder-template-${booking.id}`, async () => {
+          const tpl = await findReminderTemplate(booking.tenant_id, channelAccountId);
+          return tpl
+            ? buildReminderTemplateContent(tpl, {
+                customerName: firstName,
+                serviceName,
+                dateLabel,
+              })
+            : null;
+        });
+      }
+
+      const content = templatePayload
+        ? templatePayload.content
+        : ({ type: "text", text: fallbackText } as const);
+
       const messageId = await step.run(`insert-reminder-message-${booking.id}`, async () => {
         const { data, error } = await supabaseAdmin()
           .from("messages")
           .insert({
             conversation_id: null,
             role: "assistant",
-            content: {
-              type: "text",
-              text: `Reminder: you have a booking on ${dateLabel}. Reply if you need to reschedule.`,
-            },
+            content: content as unknown as Record<string, unknown>,
             status: "queued",
           })
           .select()
@@ -96,10 +125,8 @@ export const bookingReminder = inngest.createFunction(
           channelAccountId,
           contactId: contact.id,
           senderId,
-          content: {
-            type: "text",
-            text: `Reminder: you have a booking on ${dateLabel}. Reply if you need to reschedule.`,
-          },
+          content,
+          ...(templatePayload ? { templateId: templatePayload.templateId } : {}),
           messageId,
         },
       });

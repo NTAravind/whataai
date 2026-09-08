@@ -9,7 +9,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { KeyRound } from "lucide-react";
 
 export default function UpdatePasswordPage() {
   const router = useRouter();
@@ -46,9 +45,7 @@ export default function UpdatePasswordPage() {
     <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex items-center justify-center gap-2">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <KeyRound className="size-5" />
-          </div>
+          <img src="/logo.svg" alt="Whata AI logo" className="size-10" />
           <span className="text-xl font-semibold tracking-tight">Whata AI</span>
         </div>
         <Card>

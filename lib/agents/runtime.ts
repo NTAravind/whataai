@@ -32,6 +32,10 @@ export interface AgentRunResult {
   endedWithToolCall: boolean;
   finalMessageType: string;
   generatedAssistantMessages: number;
+  /** Content of the most recent tool result message, if any. Useful for
+   * surfacing the actual tool outcome (including failures) when the agent
+   * produced no final text. */
+  lastToolResult?: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
   cost: number;
 }
@@ -191,6 +195,23 @@ export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunRes
     .findLast((message) => message.length > 0) ?? "";
   const lastMessage = raw.messages[raw.messages.length - 1];
 
+  // Capture the most recent tool result so callers can surface the real
+  // outcome (especially failures) instead of a canned reply when the agent
+  // ends on a tool call without producing text.
+  let lastToolResult: string | undefined;
+  for (let i = raw.messages.length - 1; i >= 0; i--) {
+    const m = raw.messages[i];
+    if (graphMessageType(m) === "tool") {
+      const content = graphMessageContent(m);
+      if (typeof content === "string" && content.trim()) {
+        lastToolResult = content.trim();
+      } else if (content != null) {
+        lastToolResult = String(content);
+      }
+      break;
+    }
+  }
+
   let inputTokens = 0;
   let outputTokens = 0;
   for (const m of generatedThisTurn) {
@@ -210,6 +231,7 @@ export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunRes
     endedWithToolCall: Boolean(lastMessage?.tool_calls?.length ?? lastMessage?.kwargs?.tool_calls?.length),
     finalMessageType: lastMessage ? graphMessageType(lastMessage) : "unknown",
     generatedAssistantMessages: assistantMessages.length,
+    lastToolResult,
     usage,
     cost,
   };

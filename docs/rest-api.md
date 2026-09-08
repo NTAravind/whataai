@@ -290,6 +290,19 @@ List mail accounts, or register one (`{ "email_address", "provider",
 
 Get/update/delete a mail account.
 
+### GET|POST /api/tenants/[tenantId]/resources
+
+List bookable resources, or create one
+(`{ "businessId", "name", "type"?, "capacity"? }`; `type` defaults to
+`staff`).
+
+### GET|PATCH|DELETE /api/tenants/[tenantId]/resources/[resourceId]
+
+Get/update/delete a resource. PATCH accepts `{ "name"?, "type"?,
+"capacity"?, "metadata"?, "enabled"? }`. Delete removes the resource and its
+referencing `availability_exceptions`, `availability_rules`, and `bookings`
+rows (deepest-first, the platform has no cascading FKs).
+
 ---
 
 ## Error responses

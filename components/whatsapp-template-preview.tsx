@@ -12,18 +12,22 @@ export interface PendingTemplatePayload {
   category: "MARKETING" | "UTILITY" | "AUTHENTICATION";
   language: string;
   components: any[];
+  waAccountId?: string;
+  subCategory?: string;
 }
 
 interface WhatsAppTemplatePreviewProps {
   template: PendingTemplatePayload;
   onApprove: (template: PendingTemplatePayload) => void;
   onEdit: (feedback: string) => void;
+  submitting?: boolean;
 }
 
 export function WhatsAppTemplatePreview({
   template,
   onApprove,
   onEdit,
+  submitting = false,
 }: WhatsAppTemplatePreviewProps) {
   const [feedback, setFeedback] = useState("");
   
@@ -110,8 +114,9 @@ export function WhatsAppTemplatePreview({
           <Button 
             className="w-full bg-[#075E54] hover:bg-[#054c44]"
             onClick={() => onApprove(template)}
+            disabled={submitting}
           >
-            Approve & Submit
+            {submitting ? "Submitting…" : "Approve & Submit"}
           </Button>
         </div>
       </div>

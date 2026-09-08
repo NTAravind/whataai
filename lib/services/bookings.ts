@@ -1,5 +1,6 @@
 import { supabaseAdmin, unwrap } from "@/lib/clients/supabase";
 import { AgentToolError } from "@/lib/agents/errors";
+import { findReminderTemplate, buildReminderTemplateContent } from "@/lib/services/templates";
 
 export interface CreateBookingInput {
   tenantId: string;
@@ -155,8 +156,25 @@ export async function scheduleBookingReminder(
   const customerObj = Array.isArray(booking.customer) ? booking.customer[0] : booking.customer;
 
   const serviceName = serviceObj?.name ?? "Appointment";
-  const customerName = customerObj?.full_name ? `, ${customerObj.full_name}` : "";
+  const fullName = customerObj?.full_name?.trim() ?? "";
+  const customerName = fullName ? `, ${fullName}` : "";
+  const firstName = fullName ? fullName.split(/\s+/)[0] : "";
   const reminderText = `Reminder${customerName}: Your ${serviceName} booking is scheduled for ${formattedDate}. Please let us know if you need to reschedule or cancel!`;
+
+  // Prefer an approved "reminder" template when one exists; fall back to the
+  // plain-text reminder otherwise.
+  const reminderTemplate = await findReminderTemplate(tenantId, waAcc.id);
+  const templatePayload = reminderTemplate
+    ? buildReminderTemplateContent(reminderTemplate, {
+        customerName: firstName,
+        serviceName,
+        dateLabel: formattedDate,
+      })
+    : null;
+
+  const content = templatePayload
+    ? templatePayload.content
+    : ({ type: "text", text: reminderText } as const);
 
   return scheduleMessage({
     tenantId,
@@ -165,10 +183,8 @@ export async function scheduleBookingReminder(
     contactId: booking.customer_id,
     conversationId: booking.conversation_id ?? undefined,
     sendAt: sendAtISO,
-    content: {
-      type: "text",
-      text: reminderText,
-    },
+    content,
+    ...(templatePayload ? { templateId: templatePayload.templateId } : {}),
   });
 }
 

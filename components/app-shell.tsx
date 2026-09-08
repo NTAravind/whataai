@@ -15,7 +15,6 @@ import {
   CreditCard,
   LayoutDashboard,
   MailPlus,
-  MessageSquareText,
   MessagesSquare,
   Settings,
   Shield,
@@ -131,9 +130,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="flex items-center justify-between px-2 py-2">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-[#25D366] text-black">
-              <MessageSquareText className="size-4" />
-            </div>
+            <img src="/logo.svg" alt="Whata AI logo" className="size-8" />
             <span className="text-xl font-black tracking-[-0.07em] whitespace-nowrap text-[#111] dark:text-white">What<span className="text-[#25D366]">AI</span><span className="text-[#25D366]">.</span></span>
           </Link>
           <Button variant="ghost" size="icon" onClick={() => setIsSidebarOpen(false)} className="h-8 w-8 shrink-0">
@@ -224,9 +221,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <header className="flex items-center justify-between gap-4 border-b bg-background/80 px-4 py-3 backdrop-blur lg:hidden">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-md bg-[#25D366] text-black">
-              <MessageSquareText className="size-4" />
-            </div>
+            <img src="/logo.svg" alt="Whata AI logo" className="size-7" />
             <span className="text-xl font-black tracking-[-0.07em] whitespace-nowrap text-[#111] dark:text-white">What<span className="text-[#25D366]">AI</span><span className="text-[#25D366]">.</span></span>
           </Link>
           <div className="flex items-center gap-2">

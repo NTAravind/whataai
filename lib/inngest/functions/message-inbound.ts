@@ -109,8 +109,18 @@ export const messageInboundFunction = inngest.createFunction(
       },
     });
 
-    const replyText = result.text.trim() || "Thanks for your message. Please give us a moment while we look into this.";
-    if (!result.text.trim()) {
+    const generatedText = result.text.trim();
+    // When the agent produced no final text but ended on a tool call, surface
+    // the actual tool result (which may contain a failure detail) instead of a
+    // canned "thanks" reply — so failures aren't silently hidden from the user.
+    const toolDetail = !generatedText ? result.lastToolResult?.trim() : "";
+    const usedToolFallback = Boolean(toolDetail && !generatedText);
+    const replyText =
+      generatedText ||
+      toolDetail ||
+      "Thanks for your message. Please give us a moment while we look into this.";
+
+    if (!generatedText) {
       logger.warn("empty agent response; sending fallback", {
         conversationId: d.conversationId,
         agentId: agent.id,
@@ -118,6 +128,8 @@ export const messageInboundFunction = inngest.createFunction(
         endedWithToolCall: result.endedWithToolCall,
         finalMessageType: result.finalMessageType,
         generatedAssistantMessages: result.generatedAssistantMessages,
+        usedToolFallback,
+        toolDetail,
       });
     }
 
@@ -139,7 +151,8 @@ export const messageInboundFunction = inngest.createFunction(
     logger.info("outbound agent reply enqueued", {
       conversationId: d.conversationId,
       messageId: sent,
-      usedFallback: !result.text.trim(),
+      usedFallback: !generatedText,
+      usedToolFallback,
     });
 
     await step.run("record-usage", async () => {

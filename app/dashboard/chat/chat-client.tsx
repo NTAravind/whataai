@@ -13,6 +13,7 @@ import {
   WhatsAppTemplatePreview,
   type PendingTemplatePayload,
 } from "@/components/whatsapp-template-preview";
+import { ActionConfirmCard, type ConfirmRequestPayload } from "@/components/action-confirm-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, MessageSquare, Loader2, Send, Bot, PanelLeftClose, PanelLeftOpen } from "lucide-react";
@@ -162,12 +163,46 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
     console.log(`[chat-client] Messages updated: ${messages.length} total, latest role=${messages[messages.length - 1]?.role ?? "none"}`);
   }, [messages]);
 
-  const handleApproveTemplate = (template: PendingTemplatePayload) => {
-    if (!sendMessage) return;
-    console.log(`[chat-client] Sending template approval for: ${template.name}`);
-    sendMessage({
-      text: `Template "${template.name}" has been approved by the operator. Please confirm that it has been submitted to Meta and proceed with the next steps.`
-    });
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleApproveTemplate = async (template: PendingTemplatePayload) => {
+    if (!tenantId || submitting) return;
+    if (!template.waAccountId) {
+      console.error("[chat-client] No waAccountId on preview payload — cannot submit template");
+      toast.error("Unable to submit: no WhatsApp account resolved. Ask the copilot to retry.");
+      return;
+    }
+    setSubmitting(true);
+    console.log(`[chat-client] Submitting template "${template.name}" to Meta (waAccountId=${template.waAccountId})`);
+    try {
+      const res = await fetch("/api/whatsapp/templates/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          waAccountId: template.waAccountId,
+          name: template.name,
+          language: template.language,
+          category: template.category,
+          components: template.components,
+          subCategory: template.subCategory,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const detail = data?.error ?? `Request failed (${res.status})`;
+        console.error("[chat-client] Template submission failed:", detail);
+        toast.error(`Template submission failed: ${detail}`);
+        return;
+      }
+      console.log("[chat-client] Template submitted to Meta:", data?.template);
+      toast.success(`Template "${template.name}" submitted to Meta for review`);
+    } catch (err) {
+      console.error("[chat-client] Template submission threw:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to submit template");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleEditTemplate = (feedback: string) => {
@@ -176,6 +211,41 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
     sendMessage({
       text: `Please update the template: ${feedback}. Show me a new preview.`
     });
+  };
+
+  const handleConfirmAction = (request: ConfirmRequestPayload) => {
+    if (!sendMessage) return;
+    console.log(`[chat-client] Sending confirmation for ${request.confirmKind}: ${request.confirmText}`);
+    sendMessage({ text: request.confirmText });
+  };
+
+  const handleCancelAction = (request: ConfirmRequestPayload) => {
+    if (!sendMessage) return;
+    console.log(`[chat-client] Cancelling ${request.confirmKind}`);
+    sendMessage({ text: `Do not proceed — cancel: ${request.title}.` });
+  };
+
+  const extractConfirmRequest = (m: UIMessage): ConfirmRequestPayload | null => {
+    for (const part of m.parts) {
+      if (typeof part.type !== "string" || !part.type.startsWith("tool-")) continue;
+      const tool = part as ToolUIPart;
+      if (tool.state !== "output-available") continue;
+      const output = tool.output as unknown;
+      if (output && typeof output === "object") {
+        const parsed = output as ConfirmRequestPayload;
+        if (parsed.__type === "CONFIRM_REQUEST") return parsed;
+      }
+      // Some versions stringify the output.
+      if (output && typeof output !== "object" && String(output).includes("CONFIRM_REQUEST")) {
+        try {
+          const parsed = JSON.parse(String(output));
+          if (parsed.__type === "CONFIRM_REQUEST") return parsed;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return null;
   };
 
   const extractPendingPreview = (m: UIMessage): PendingTemplatePayload | null => {
@@ -341,6 +411,9 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
               const pendingPreview =
                 m.role === "assistant" ? extractPendingPreview(m) : null;
 
+              const confirmRequest =
+                m.role === "assistant" ? extractConfirmRequest(m) : null;
+
               if (pendingPreview) {
                 return (
                   <div key={m.id} className="flex flex-col items-start gap-2">
@@ -351,6 +424,19 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
                       template={pendingPreview}
                       onApprove={handleApproveTemplate}
                       onEdit={handleEditTemplate}
+                      submitting={submitting}
+                    />
+                  </div>
+                );
+              }
+
+              if (confirmRequest) {
+                return (
+                  <div key={m.id} className="flex flex-col items-start gap-2">
+                    <ActionConfirmCard
+                      request={confirmRequest}
+                      onConfirm={() => handleConfirmAction(confirmRequest)}
+                      onCancel={() => handleCancelAction(confirmRequest)}
                     />
                   </div>
                 );
