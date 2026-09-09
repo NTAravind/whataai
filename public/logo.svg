@@ -1,12 +1,7 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
-<svg width="100%" height="100%" viewBox="0 0 500 500" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="100%" height="100%" viewBox="0 0 500 500" version="1.1" xmlns="http://www.w3.org/2000/svg" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
     <g transform="matrix(1.106195,0,0,1.01833,-53.097345,-9.164969)">
         <ellipse cx="274" cy="254.5" rx="226" ry="245.5" style="fill:rgb(16,196,87);"/>
     </g>
-    <g transform="matrix(7.885848,0,0,7.885848,-1132.919336,-1038.590068)">
-        <g transform="matrix(50,0,0,50,201.344993,183.627042)">
-        </g>
-        <text x="151.345px" y="183.627px" style="font-family:'Krungthep';font-size:50px;fill:rgb(254,247,247);">W</text>
-    </g>
+    <path d="M93.525 113.745H159.137V376.504H192.098Q205.806 376.504 215.432 366.801Q225.058 357.098 225.058 343.852V113.745H290.671V376.504H323.631Q337.031 376.504 346.657 366.801Q356.284 357.098 356.284 343.852V113.745H422.204V297.184Q422.204 343.082 389.167 376.273Q356.13 409.465 309.923 409.465H225.058V398.991Q206.114 409.465 178.39 409.465H93.525Z" style="fill:rgb(254,247,247);"/>
 </svg>

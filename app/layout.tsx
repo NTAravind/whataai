@@ -19,6 +19,11 @@ export const metadata: Metadata = {
     template: "%s · Whata AI",
   },
   description: "AI customer-service agents for WhatsApp",
+  icons: {
+    icon: "/logo.svg",
+    shortcut: "/logo.svg",
+    apple: "/logo.svg",
+  },
 };
 
 export default function RootLayout({
