@@ -4,9 +4,11 @@ import { sendWhatsAppText, sendWhatsAppTemplate, sendWhatsAppDocument } from "@/
 import { getIntegrationWithCredentials } from "@/lib/services/integrations";
 import { isOAuthProviderType } from "@/lib/integrations/oauth-providers";
 import { getValidAccessToken } from "@/lib/integrations/token-refresh";
+import { getTemplate } from "@/lib/services/templates";
 import { uploadMedia } from "@/lib/meta/whatsapp";
 import { supabaseAdmin, unwrap } from "@/lib/clients/supabase";
 import { resolveTarget } from "@/lib/automations/url-guard";
+import { NonRetriableError } from "inngest";
 
 /** Response size caps — stream and abort past the cap. */
 const TEXT_LIMIT = 5 * 1024 * 1024;
@@ -50,11 +52,48 @@ export interface ExecContext {
 export type Executor = (step: AutomationStep, ctx: ExecContext) => Promise<unknown>;
 
 /**
+ * Strict interpolation — throws NonRetriableError listing missing variables.
+ * Returns interpolated string on success.
+ */
+function recursiveInterpolateStrict(
+  template: string,
+  variables: Record<string, unknown>,
+  esc: (s: string) => string = (s) => s,
+): string {
+  const missing: string[] = [];
+  const result = template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, path: string) => {
+    const key = path.trim();
+    const value = lookupPath(variables, key);
+    if (value === undefined) {
+      missing.push(key);
+      return _match; // keep placeholder for error message
+    }
+    if (typeof value === "string") return esc(value);
+    return esc(JSON.stringify(value));
+  });
+  if (missing.length > 0) {
+    throw new NonRetriableError(`missing variables for strict interpolation: ${missing.join(", ")}`);
+  }
+  return result;
+}
+
+function lookupPath(obj: unknown, path: string): unknown {
+  let current: unknown = obj;
+  for (const part of path.split(".")) {
+    if (current === null || current === undefined) return undefined;
+    if (typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+/**
  * Replace `{{a.b.c}}` by walking the variables object. Values that aren't
  * strings are JSON-stringified. No templating library — the grammar is just
  * dot paths inside double braces. `esc` transforms each substituted value so
  * callers can pick context-appropriate escaping (encodes a URL value, strips
  * header CRLF, JSON-escapes a body string, …).
+ * Non-strict version: unresolved variables are left as-is in the template.
  */
 export function recursiveInterpolate(
   template: string,
@@ -68,16 +107,6 @@ export function recursiveInterpolate(
     if (typeof value === "string") return esc(value);
     return esc(JSON.stringify(value));
   });
-}
-
-function lookupPath(obj: unknown, path: string): unknown {
-  let current: unknown = obj;
-  for (const part of path.split(".")) {
-    if (current === null || current === undefined) return undefined;
-    if (typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
 }
 
 function requireContact(ctx: ExecContext) {
@@ -116,14 +145,16 @@ function stepDedupeKey(ctx: ExecContext): string | undefined {
 // api_call
 // ---------------------------------------------------------------------------
 
-async function apiCallExecutor(step: Extract<AutomationStep, { type: "api_call" }>, ctx: ExecContext): Promise<unknown> {
+async function apiCallExecutor(step: AutomationStep, ctx: ExecContext): Promise<unknown> {
+  if (step.type !== "api_call") throw new Error("wrong executor");
+  const s = step;
   let integration: Awaited<ReturnType<typeof getIntegrationWithCredentials>> | null = null;
-  if (step.integrationId) {
-    integration = await getIntegrationWithCredentials(ctx.tenantId, step.integrationId);
+  if (s.integrationId) {
+    integration = await getIntegrationWithCredentials(ctx.tenantId, s.integrationId);
   }
 
-  const baseUrl = integration?.base_url?.trim() || null;
-  if (!step.url?.trim() && !baseUrl) throw new HttpError(400, "api_call step needs a url or an integration with a base_url");
+const baseUrl = integration?.base_url?.trim() || null;
+  if (!s.url?.trim() && !baseUrl) throw new HttpError(400, "api_call step needs a url or an integration with a base_url");
 
   const isOauth = integration ? isOAuthProviderType(integration.type) : false;
 
@@ -138,21 +169,21 @@ async function apiCallExecutor(step: Extract<AutomationStep, { type: "api_call" 
 
   // Guard and resolve the target. `step.url` resolves against the integration
   // base_url (SSRF-safe origin pinning) or must itself be an absolute URL.
-  const rawUrl = step.url ? recursiveInterpolate(step.url, interpolateVars, encodeURIComponent) : "/";
+  const rawUrl = s.url ? recursiveInterpolate(s.url, interpolateVars, encodeURIComponent) : "/";
   const target = await resolveTarget(rawUrl, baseUrl);
 
   // JSON body — every interpolated value is JSON-escaped, then parsed by the
   // server, so a value containing `"` or newlines cannot break the payload.
-  const bodyText = step.body
-    ? recursiveInterpolate(step.body, interpolateVars, (s) => JSON.stringify(s).slice(1, -1))
+  const bodyText = s.body
+    ? recursiveInterpolate(s.body, interpolateVars, (s_) => JSON.stringify(s_).slice(1, -1))
     : undefined;
 
   // Headers — interpolated values strip CR/LF so a variable can never smuggle
   // a second header line.
-  const stripCrlf = (s: string) => s.replace(/[\r\n]/g, "");
+  const stripCrlf = (s_: string) => s_.replace(/[\r\n]/g, "");
   const headers: Record<string, string> = {};
-  if (step.headers) {
-    for (const [k, v] of Object.entries(step.headers)) {
+  if (s.headers) {
+    for (const [k, v] of Object.entries(s.headers)) {
       headers[k] = recursiveInterpolate(v, interpolateVars, stripCrlf);
     }
   }
@@ -160,7 +191,7 @@ async function apiCallExecutor(step: Extract<AutomationStep, { type: "api_call" 
   // Safe-to-retry steps advertise an idempotency key so a retried fetch after a
   // timeout cannot double-submit (GET is idempotent by definition). Callers may
   // pin their own header to a stateful key (e.g. `${ctx.runId}:${ctx.stepIndex}`).
-  if (step.method !== "GET" && !headers["Idempotency-Key"] && ctx.runId !== undefined && ctx.stepIndex !== undefined) {
+  if (s.method !== "GET" && !headers["Idempotency-Key"] && ctx.runId !== undefined && ctx.stepIndex !== undefined) {
     headers["Idempotency-Key"] = `automation:${ctx.runId}:${ctx.stepIndex}`;
   }
 
@@ -178,7 +209,7 @@ async function apiCallExecutor(step: Extract<AutomationStep, { type: "api_call" 
   // Resolve the WhatsApp account BEFORE the network call when the response is
   // binary: a missing account is a config error, so fail fast without an
   // expensive external request.
-  const isBinary = step.responseType === "binary";
+  const isBinary = s.responseType === "binary";
   let wa: ReturnType<typeof requireWaAccount> | null = null;
   if (isBinary) wa = requireWaAccount(ctx);
 
@@ -269,13 +300,27 @@ async function readCapped(
   return { bytes: merged, exceeded: false };
 }
 
+/** Truncate a JSON-serializable value to ~20 KB for step_results storage. */
+export function truncateOutput(value: unknown): unknown {
+  const json = JSON.stringify(value);
+  const MAX = 20 * 1024; // 20 KB
+  if (json.length <= MAX) return value;
+  const preview = json.slice(0, 2 * 1024); // 2 KB preview
+  return { truncated: true, bytes: json.length, preview: JSON.parse(preview) };
+}
+
 // ---------------------------------------------------------------------------
 // send_message / send_template / send_document
 // ---------------------------------------------------------------------------
 
-async function sendMessageExecutor(step: Extract<AutomationStep, { type: "send_message" }>, ctx: ExecContext) {
+async function sendMessageExecutor(step: AutomationStep, ctx: ExecContext) {
+  if (step.type !== "send_message") throw new Error("wrong executor");
+  const s = step;
   const contact = requireContact(ctx);
-  const text = recursiveInterpolate(step.text, ctx.variables);
+  const strict = s.strict ?? true;
+  const text = strict
+    ? recursiveInterpolateStrict(s.text, ctx.variables)
+    : recursiveInterpolate(s.text, ctx.variables);
   const result = await sendWhatsAppText({
     tenantId: ctx.tenantId,
     waAccountId: ctx.waAccount?.id,
@@ -287,25 +332,68 @@ async function sendMessageExecutor(step: Extract<AutomationStep, { type: "send_m
   return { messageId: result.messageId, status: "queued" };
 }
 
-async function sendTemplateExecutor(step: Extract<AutomationStep, { type: "send_template" }>, ctx: ExecContext) {
+async function sendTemplateExecutor(step: AutomationStep, ctx: ExecContext) {
+  if (step.type !== "send_template") throw new Error("wrong executor");
+  const s = step;
   const contact = requireContact(ctx);
+  const strict = s.strict ?? true;
+
+  // Load template to count body placeholders ({{1}}, {{2}}...).
+  const template = await getTemplate(s.templateId, ctx.tenantId);
+  if (!template) throw new HttpError(404, "Template not found");
+
+  // Extract body text from components to count placeholders.
+  const bodyComponents = (template.components as Array<{ type: string; text?: string }> | undefined)?.filter(
+    (c) => c.type === "BODY" && c.text,
+  ) ?? [];
+  const bodyText = bodyComponents.map((c) => c.text).join("");
+  const placeholderCount = (bodyText.match(/\{\{\s*\d+\s*\}\}/g) ?? []).length;
+
+  // Interpolate each param from ctx.variables.
+  const rawParams = s.params ?? [];
+  const params: string[] = [];
+  for (const p of rawParams) {
+    const interpolated = strict
+      ? recursiveInterpolateStrict(p, ctx.variables)
+      : recursiveInterpolate(p, ctx.variables);
+    params.push(interpolated);
+  }
+
+  if (placeholderCount > 0 && params.length !== placeholderCount) {
+    throw new NonRetriableError(
+      `template "${template.name}" has ${placeholderCount} body placeholder(s) but ${params.length} param(s) provided`,
+    );
+  }
+
   const result = await sendWhatsAppTemplate({
     tenantId: ctx.tenantId,
     waAccountId: ctx.waAccount?.id,
     to: contact.phone_number!,
-    templateId: step.templateId,
+    templateId: s.templateId,
+    params,
     conversationId: ctx.conversationId ?? undefined,
     dedupeKey: stepDedupeKey(ctx),
   });
   return { messageId: result.messageId, status: "queued" };
 }
 
-async function sendDocumentExecutor(step: Extract<AutomationStep, { type: "send_document" }>, ctx: ExecContext) {
+async function sendDocumentExecutor(step: AutomationStep, ctx: ExecContext) {
+  if (step.type !== "send_document") throw new Error("wrong executor");
+  const s = step;
   const contact = requireContact(ctx);
   const wa = requireWaAccount(ctx);
-  const mediaId = step.mediaId ? recursiveInterpolate(step.mediaId, ctx.variables) : undefined;
-  const link = step.url ? recursiveInterpolate(step.url, ctx.variables) : undefined;
-  const filename = step.filename?.trim() || link?.split("/").pop()?.slice(0, 60) || undefined;
+  const strict = s.strict ?? true;
+  const mediaId = s.mediaId
+    ? (strict
+        ? recursiveInterpolateStrict(s.mediaId, ctx.variables)
+        : recursiveInterpolate(s.mediaId, ctx.variables))
+    : undefined;
+  const link = s.url
+    ? (strict
+        ? recursiveInterpolateStrict(s.url, ctx.variables)
+        : recursiveInterpolate(s.url, ctx.variables))
+    : undefined;
+  const filename = s.filename?.trim() || link?.split("/").pop()?.slice(0, 60) || undefined;
   const result = await sendWhatsAppDocument({
     waAccountId: wa.id,
     to: contact.phone_number!,
@@ -320,7 +408,9 @@ async function sendDocumentExecutor(step: Extract<AutomationStep, { type: "send_
 // tag_contact / wait
 // ---------------------------------------------------------------------------
 
-async function tagContactExecutor(step: Extract<AutomationStep, { type: "tag_contact" }>, ctx: ExecContext) {
+async function tagContactExecutor(step: AutomationStep, ctx: ExecContext) {
+  if (step.type !== "tag_contact") throw new Error("wrong executor");
+  const s = step;
   if (!ctx.contact) throw new HttpError(400, "no contact on this run — cannot tag");
   // Atomic append-if-absent via the DB function — never read-modify-write the
   // whole metadata column from here (concurrent steps would lose tags).
@@ -328,26 +418,29 @@ async function tagContactExecutor(step: Extract<AutomationStep, { type: "tag_con
     await supabaseAdmin().rpc("add_contact_tag", {
       p_tenant: ctx.tenantId,
       p_contact: ctx.contact.id,
-      p_tag: step.tag,
+      p_tag: s.tag,
     }),
   );
-  return { tag: step.tag, tags };
+  return { tag: s.tag, tags };
 }
 
-async function waitExecutor(step: Extract<AutomationStep, { type: "wait" }>, ctx: ExecContext) {
-  await ctx.sleep(step.seconds * 1000);
-  return { sleptSeconds: step.seconds };
+async function waitExecutor(step: AutomationStep, ctx: ExecContext) {
+  if (step.type !== "wait") throw new Error("wrong executor");
+  const s = step;
+  await ctx.sleep(s.seconds * 1000);
+  return { sleptSeconds: s.seconds };
 }
 
 // ---------------------------------------------------------------------------
-// Dictionary
+// Dictionary — Record<...> allows index access with union key; exhaustiveness
+// is verified by the object literal containing every AutomationStep["type"].
 // ---------------------------------------------------------------------------
 
 export const executors: Record<AutomationStep["type"], Executor> = {
-  api_call: apiCallExecutor as Executor,
-  send_message: sendMessageExecutor as Executor,
-  send_template: sendTemplateExecutor as Executor,
-  send_document: sendDocumentExecutor as Executor,
-  tag_contact: tagContactExecutor as Executor,
-  wait: waitExecutor as Executor,
+  api_call: apiCallExecutor,
+  send_message: sendMessageExecutor,
+  send_template: sendTemplateExecutor,
+  send_document: sendDocumentExecutor,
+  tag_contact: tagContactExecutor,
+  wait: waitExecutor,
 };

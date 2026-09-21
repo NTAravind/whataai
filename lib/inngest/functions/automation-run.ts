@@ -2,9 +2,10 @@ import { inngest } from "@/lib/clients/ingest";
 import { automationTriggered } from "@/lib/inngest/events";
 import { getAutomation } from "@/lib/services/automations";
 import { createRun, updateRun } from "@/lib/services/automation-runs";
-import { executors } from "@/lib/automations/executors";
+import { executors, truncateOutput } from "@/lib/automations/executors";
 import type { ExecContext } from "@/lib/automations/executors";
 import type { AutomationStep } from "@/lib/automations/types";
+import { automationStepsSchema } from "@/lib/automations/types";
 import { supabaseAdmin } from "@/lib/clients/supabase";
 import { NonRetriableError } from "inngest";
 import { HttpError } from "@/lib/http";
@@ -87,6 +88,10 @@ export const automationRun = inngest.createFunction(
       }),
     );
 
+    // Re-parse steps at run time so defaults (strict, params, etc.) apply to
+    // stored rows that were created before those fields existed.
+    const steps = automationStepsSchema.parse(automation.steps) as AutomationStep[];
+
     const variables: Record<string, unknown> = { ...d.variables };
     const stepResults: Array<Record<string, unknown>> = [];
 
@@ -113,14 +118,15 @@ export const automationRun = inngest.createFunction(
       : undefined;
     variables.conversation = { lastMessage };
 
-    for (let i = 0; i < automation.steps.length; i++) {
-      const stepDef = automation.steps[i] as AutomationStep;
+    for (let i = 0; i < steps.length; i++) {
+      const stepDef = steps[i];
       const type = stepDef.type;
 
       if (type === "wait") {
         const output = await step.sleep(`step-wait-${i}`, `${stepDef.seconds}s`);
+        const truncated = truncateOutput(output);
         variables[`step_${i}`] = output;
-        stepResults.push({ index: i, type, status: "completed", output });
+        stepResults.push({ index: i, type, status: "completed", output: truncated });
         continue;
       }
 
@@ -128,8 +134,9 @@ export const automationRun = inngest.createFunction(
         const output = await step.run(`step-${i}`, async () => {
           return await executors[type](stepDef, { ...baseCtx, variables, stepIndex: i });
         });
+        const truncated = truncateOutput(output);
         variables[`step_${i}`] = output;
-        stepResults.push({ index: i, type, status: "completed", output });
+        stepResults.push({ index: i, type, status: "completed", output: truncated });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         stepResults.push({ index: i, type, status: "failed", error: message });

@@ -18,14 +18,31 @@ export const stepSchema = z.discriminatedUnion("type", [
     body: z.string().optional(),
     responseType: z.enum(["json", "binary"]).default("json"),
     filename: z.string().optional(),
+    /** Lenient by default — unknown `{{var}}` left as-is. Set true to error on missing. */
+    strict: z.boolean().default(false).optional(),
   }).refine((s) => s.integrationId || s.url, "either integrationId or url is required"),
-  z.object({ type: z.literal("send_message"), text: z.string() }),
-  z.object({ type: z.literal("send_template"), templateId: z.string() }),
+  z.object({
+    type: z.literal("send_message"),
+    text: z.string(),
+    /** Strict by default — unknown `{{var}}` throws NonRetriableError. */
+    strict: z.boolean().default(true).optional(),
+  }),
+  z.object({
+    type: z.literal("send_template"),
+    templateId: z.string(),
+    /** Array of parameter strings, interpolated from ctx.variables. Each is fed to the
+     *  template's body component as `{{1}}`, `{{2}}` etc. Count must match placeholders. */
+    params: z.array(z.string()).optional(),
+    /** Strict by default — unknown `{{var}}` throws NonRetriableError. */
+    strict: z.boolean().default(true).optional(),
+  }),
   z.object({
     type: z.literal("send_document"),
     mediaId: z.string().optional(),
     url: z.string().optional(),
     filename: z.string().optional(),
+    /** Strict by default — unknown `{{var}}` throws NonRetriableError. */
+    strict: z.boolean().default(true).optional(),
   }).refine((s) => s.mediaId || s.url, "either mediaId or url is required"),
   z.object({ type: z.literal("tag_contact"), tag: z.string() }),
   z.object({ type: z.literal("wait"), seconds: z.number().min(1).max(3600) }),

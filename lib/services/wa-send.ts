@@ -144,7 +144,8 @@ export async function sendWhatsAppText(input: SendWhatsAppTextInput) {
 export interface SendWhatsAppTemplateInput extends WaAccountRef {
   to: string;
   templateId: string;
-  params?: Record<string, unknown>;
+  /** Array of parameter strings, one per body placeholder ({{1}}, {{2}}...). */
+  params?: string[];
   conversationId?: string;
   /** Optional at-least-once dedupe key — a repeat insert returns the existing row. */
   dedupeKey?: string;
@@ -171,7 +172,7 @@ export async function sendWhatsAppTemplate(input: SendWhatsAppTemplateInput) {
     conversationId: input.conversationId,
     dedupeKey: input.dedupeKey,
     templateId: template.id,
-    content: { type: "template", meta: { template_id: template.id, params: input.params ?? {} } },
+    content: { type: "template", meta: { template_id: template.id, parameters: input.params ?? [] } },
   });
 }
 
