@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/clients/supabase";
 import { getOrCreateContact } from "@/lib/services/contacts";
 import { getOrCreateConversation } from "@/lib/services/conversations";
-import { enqueueOutboundMessage } from "@/lib/services/messages";
+import { enqueueOutboundMessage, type OutboundInput } from "@/lib/services/messages";
 import { getTemplate } from "@/lib/services/templates";
 
 export class HttpError extends Error {
@@ -79,11 +79,26 @@ export interface SendWhatsAppTextInput extends WaAccountRef {
   to: string;
   text: string;
   conversationId?: string;
+  /** Optional at-least-once dedupe key — a repeat insert returns the existing row. */
+  dedupeKey?: string;
 }
 
-export async function sendWhatsAppText(input: SendWhatsAppTextInput) {
-  if (!input.to || !input.text) throw new HttpError(400, "to and text are required");
-
+/**
+ * Shared plumbing behind every send: resolve the account, the contact and the
+ * conversation, then enqueue the durable outbound message (addresses a contract
+ * opt-out before anything is queued).
+ */
+async function sendOutbound(input: {
+  tenantId?: string;
+  waAccountId?: string;
+  waPhoneNumberId?: string;
+  to: string;
+  conversationId?: string;
+  dedupeKey?: string;
+  content: OutboundInput["content"];
+  templateId?: string;
+  params?: Record<string, unknown>;
+}) {
   const wa = await resolveWaAccount(input);
   const tenantId = input.tenantId ?? wa.tenant_id;
 
@@ -105,10 +120,25 @@ export async function sendWhatsAppText(input: SendWhatsAppTextInput) {
     conversationId,
     contactId: contact.id,
     senderId: input.to,
-    content: { type: "text", text: input.text },
+    content: input.content,
+    templateId: input.templateId,
+    dedupeKey: input.dedupeKey,
   });
 
   return { messageId: message.id, conversationId, status: "queued" };
+}
+
+export async function sendWhatsAppText(input: SendWhatsAppTextInput) {
+  if (!input.to || !input.text) throw new HttpError(400, "to and text are required");
+  return sendOutbound({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    waPhoneNumberId: input.waPhoneNumberId,
+    to: input.to,
+    conversationId: input.conversationId,
+    dedupeKey: input.dedupeKey,
+    content: { type: "text", text: input.text },
+  });
 }
 
 export interface SendWhatsAppTemplateInput extends WaAccountRef {
@@ -116,6 +146,8 @@ export interface SendWhatsAppTemplateInput extends WaAccountRef {
   templateId: string;
   params?: Record<string, unknown>;
   conversationId?: string;
+  /** Optional at-least-once dedupe key — a repeat insert returns the existing row. */
+  dedupeKey?: string;
 }
 
 export async function sendWhatsAppTemplate(input: SendWhatsAppTemplateInput) {
@@ -132,29 +164,15 @@ export async function sendWhatsAppTemplate(input: SendWhatsAppTemplateInput) {
     throw new HttpError(400, `Template is not approved (status: ${template.status})`);
   }
 
-  const contact = await getOrCreateContact(tenantId, input.to, null);
-  if (contact.opt_out) throw new HttpError(403, "Contact has opted out");
-
-  const conversationId = await resolveConversation({
+  return sendOutbound({
     tenantId,
-    contactId: contact.id,
-    channelAccountId: wa.id,
-    senderId: input.to,
+    waAccountId: wa.id,
+    to: input.to,
     conversationId: input.conversationId,
-  });
-
-  const message = await enqueueOutboundMessage({
-    tenantId,
-    channel: "whatsapp",
-    channelAccountId: wa.id,
-    conversationId,
-    contactId: contact.id,
-    senderId: input.to,
-    content: { type: "template", meta: { template_id: template.id, params: input.params ?? {} } },
+    dedupeKey: input.dedupeKey,
     templateId: template.id,
+    content: { type: "template", meta: { template_id: template.id, params: input.params ?? {} } },
   });
-
-  return { messageId: message.id, conversationId, status: "queued" };
 }
 
 export interface SendWhatsAppDocumentInput extends WaAccountRef {
@@ -166,6 +184,8 @@ export interface SendWhatsAppDocumentInput extends WaAccountRef {
     caption?: string;
   };
   conversationId?: string;
+  /** Optional at-least-once dedupe key — a repeat insert returns the existing row. */
+  dedupeKey?: string;
 }
 
 export async function sendWhatsAppDocument(input: SendWhatsAppDocumentInput) {
@@ -174,31 +194,15 @@ export async function sendWhatsAppDocument(input: SendWhatsAppDocumentInput) {
     throw new HttpError(400, "document mediaId or link is required");
   }
 
-  const wa = await resolveWaAccount(input);
-  const tenantId = input.tenantId ?? wa.tenant_id;
-
-  const contact = await getOrCreateContact(tenantId, input.to, null);
-  if (contact.opt_out) throw new HttpError(403, "Contact has opted out");
-
-  const conversationId = await resolveConversation({
-    tenantId,
-    contactId: contact.id,
-    channelAccountId: wa.id,
-    senderId: input.to,
+  return sendOutbound({
+    tenantId: input.tenantId,
+    waAccountId: input.waAccountId,
+    waPhoneNumberId: input.waPhoneNumberId,
+    to: input.to,
     conversationId: input.conversationId,
-  });
-
-  const message = await enqueueOutboundMessage({
-    tenantId,
-    channel: "whatsapp",
-    channelAccountId: wa.id,
-    conversationId,
-    contactId: contact.id,
-    senderId: input.to,
+    dedupeKey: input.dedupeKey,
     content: { type: "document", meta: input.document },
   });
-
-  return { messageId: message.id, conversationId, status: "queued" };
 }
 
 /** Utility/service message — a UTILITY-category template (session-window expired, etc.). */

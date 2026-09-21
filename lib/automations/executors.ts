@@ -37,10 +37,12 @@ export interface ExecContext {
     id: string;
     tenant_id: string;
     wa_phone_number_id: string | null;
-    access_token?: string | null;
   } | null;
   /** Top-level variables for this run (captured fields + step_N outputs). */
   variables: Record<string, unknown>;
+  /** Run + step identity, for dedupe keys / Idempotency headers. */
+  runId?: string;
+  stepIndex?: number;
   /** Maps to a durable step.sleep() in the automation-run function. */
   sleep: (ms: number) => Promise<unknown>;
 }
@@ -92,6 +94,24 @@ function requireWaAccount(ctx: ExecContext) {
   return ctx.waAccount;
 }
 
+/** Fresh WhatsApp token from the DB — never captured into the run's context. */
+async function resolveWaAccessToken(tenantId: string, waAccountId: string): Promise<string | undefined> {
+  const { data, error } = await supabaseAdmin()
+    .from("wa_accounts")
+    .select("access_token")
+    .eq("id", waAccountId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as { access_token: string | null } | null)?.access_token ?? undefined;
+}
+
+/** Stable dedupe key for a step's outbound message, when we know which step it is. */
+function stepDedupeKey(ctx: ExecContext): string | undefined {
+  if (ctx.runId === undefined || ctx.stepIndex === undefined) return undefined;
+  return `${ctx.runId}:${ctx.stepIndex}`;
+}
+
 // ---------------------------------------------------------------------------
 // api_call
 // ---------------------------------------------------------------------------
@@ -135,6 +155,13 @@ async function apiCallExecutor(step: Extract<AutomationStep, { type: "api_call" 
     for (const [k, v] of Object.entries(step.headers)) {
       headers[k] = recursiveInterpolate(v, interpolateVars, stripCrlf);
     }
+  }
+
+  // Safe-to-retry steps advertise an idempotency key so a retried fetch after a
+  // timeout cannot double-submit (GET is idempotent by definition). Callers may
+  // pin their own header to a stateful key (e.g. `${ctx.runId}:${ctx.stepIndex}`).
+  if (step.method !== "GET" && !headers["Idempotency-Key"] && ctx.runId !== undefined && ctx.stepIndex !== undefined) {
+    headers["Idempotency-Key"] = `automation:${ctx.runId}:${ctx.stepIndex}`;
   }
 
   // OAuth integrations: auto-inject the access token (refreshing first if
@@ -182,7 +209,9 @@ async function apiCallExecutor(step: Extract<AutomationStep, { type: "api_call" 
       );
     }
     const mimeType = res.headers.get("content-type")?.split(";")[0] ?? "application/octet-stream";
-    const token = wa.access_token ?? undefined;
+    // The WhatsApp token lives in the DB, resolved here (fresh per attempt)
+    // rather than captured into the run's checkpointed context.
+    const token = await resolveWaAccessToken(ctx.tenantId, wa.id);
     const uploaded = await uploadMedia({
       phoneNumberId: wa.wa_phone_number_id ?? "",
       buffer: bytes,
@@ -253,6 +282,7 @@ async function sendMessageExecutor(step: Extract<AutomationStep, { type: "send_m
     to: contact.phone_number!,
     text,
     conversationId: ctx.conversationId ?? undefined,
+    dedupeKey: stepDedupeKey(ctx),
   });
   return { messageId: result.messageId, status: "queued" };
 }
@@ -265,6 +295,7 @@ async function sendTemplateExecutor(step: Extract<AutomationStep, { type: "send_
     to: contact.phone_number!,
     templateId: step.templateId,
     conversationId: ctx.conversationId ?? undefined,
+    dedupeKey: stepDedupeKey(ctx),
   });
   return { messageId: result.messageId, status: "queued" };
 }
@@ -280,6 +311,7 @@ async function sendDocumentExecutor(step: Extract<AutomationStep, { type: "send_
     to: contact.phone_number!,
     document: { mediaId, link, filename },
     conversationId: ctx.conversationId ?? undefined,
+    dedupeKey: stepDedupeKey(ctx),
   });
   return { messageId: result.messageId, status: "queued" };
 }

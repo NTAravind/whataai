@@ -6,6 +6,8 @@ import { executors } from "@/lib/automations/executors";
 import type { ExecContext } from "@/lib/automations/executors";
 import type { AutomationStep } from "@/lib/automations/types";
 import { supabaseAdmin } from "@/lib/clients/supabase";
+import { NonRetriableError } from "inngest";
+import { HttpError } from "@/lib/http";
 
 /**
  * Durable automation runner (docs/backend.md §9 — file-like background work).
@@ -42,7 +44,7 @@ export const automationRun = inngest.createFunction(
           : Promise.resolve({ data: null }),
         supabaseAdmin()
           .from("wa_accounts")
-          .select("id, tenant_id, wa_phone_number_id, access_token")
+          .select("id, tenant_id, wa_phone_number_id")
           .eq("tenant_id", d.tenantId)
           .eq("status", "active")
           .limit(1)
@@ -98,10 +100,10 @@ export const automationRun = inngest.createFunction(
             id: waAccount.id,
             tenant_id: waAccount.tenant_id,
             wa_phone_number_id: waAccount.wa_phone_number_id,
-            access_token: waAccount.access_token,
           }
         : null,
       variables,
+      runId: run.id,
       // Only used as a fallback — `wait` steps run through `step.sleep()`
       // directly below; executors of other types never call it.
       sleep: async () => undefined,
@@ -124,7 +126,7 @@ export const automationRun = inngest.createFunction(
 
       try {
         const output = await step.run(`step-${i}`, async () => {
-          return await executors[type](stepDef, { ...baseCtx, variables });
+          return await executors[type](stepDef, { ...baseCtx, variables, stepIndex: i });
         });
         variables[`step_${i}`] = output;
         stepResults.push({ index: i, type, status: "completed", output });
@@ -137,6 +139,11 @@ export const automationRun = inngest.createFunction(
           stepType: type,
           automationId: automation.id,
         });
+        // Convert config/validation 4xx errors to NonRetriableError so Inngest
+        // doesn't retry them. 5xx / network errors remain retryable.
+        if (err instanceof HttpError && err.status >= 400 && err.status < 500) {
+          throw new NonRetriableError(message);
+        }
         await step.run("mark-failed", () =>
           updateRun(d.tenantId, run.id, { status: "failed", stepResults, error: message }),
         );
