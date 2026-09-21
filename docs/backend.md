@@ -20,16 +20,24 @@ templates, escalating to a human.
 
 **Stack:** Next.js 16.2 (App Router, server route handlers) · Supabase
 (Auth/Postgres/RLS) · LangGraph + LangChain
-(`@langchain/langgraph`, `@langchain/core`, `@langchain/google-genai`) driving
-the agent state machine, with Vercel AI SDK (`ai@7`, `@ai-sdk/google`) retained
-for the dashboard chat streaming path · Inngest (durable event pipeline /
-background jobs) · Meta Cloud API (WhatsApp) · Resend (mail).
+(`@langchain/langgraph`, `@langchain/core`, `@langchain/google-genai`,
+`@langchain/groq`) driving the agent state machine, with Vercel AI SDK
+(`ai@7`, `@ai-sdk/google`, `@ai-sdk/groq`) powering the dashboard chat
+streaming path · Inngest v4 (durable event pipeline / background jobs) ·
+Meta Cloud API (WhatsApp) · Resend (mail).
+
+**Providers:** every model — provider, id catalog, pricing, and SDK factories —
+is defined once in `lib/agents/provider.ts`, which drives BOTH the AI-SDK
+(`getAISDKModel`) and LangChain (`getLangChainModel`) paths. Switch providers
+(Google ⇄ Groq) and add/retire models in that one file; see §5.1.
 
 **Stack truth that matters:** this is a **jobs/event-driven backend wearing a
 Next.js coat**. Route handlers are thin HTTP fronts — the real work happens in
 Inngest functions. Never put LLM calls, Meta calls, or long-running work inline
 in a route handler. The inbound agent reply is a LangGraph state machine (see
-§5) driven from inside the durable `message-inbound` Inngest function.
+§5) driven from inside the durable `message-inbound` Inngest function; custom
+automations are an Inngest pipeline (`automation/triggered` → `automation-run`,
+see §4a) that steps through integration calls and WhatsApp sends.
 
 ---
 
@@ -38,36 +46,52 @@ in a route handler. The inbound agent reply is a LangGraph state machine (see
 ```
 app/api/                     route handlers only (thin)
   auth/callback/             Supabase OAuth callback
+  auth/oauth/callback/       integration OAuth2 code→token exchange + redirect to /dashboard/oauth-result
   me/                        current-user endpoint
   admin/                     god-mode CRUD: tenants, plans, subscriptions, god-users
   tenants/[tenantId]/        tenant-scoped CRUD (see below)
-  whatsapp/                  webhooks, flows, message send-* / services, templates
+  whatsapp/                  webhooks, flows, templates (create/delete/status),
+                             message (send-text / send-template / services / utility)
   mail/webhooks/             Resend inbound
-  inngest/                   Inngest SDK serving endpoint
+  inngest/                   Inngest SDK serving endpoint (maxDuration = 60)
 
 app/privacy/                 public privacy page (not an API route)
 
 lib/
   api/                       shared API client + types
   clients/supabase.ts        untyped admin (service-role) client + unwrap()
-  clients/ingest.ts          Inngest client
+  clients/ingest.ts          Inngest v4 client
   supabase/browser.ts        browser Supabase client
   auth/guard.ts              session guards: requireUser / requireGodUser / requireTenantAccess
   http.ts                    HttpError + response/error helpers used by every route
-  services/                  data-access layer — one file per aggregate (tenants, plans, bookings, …)
-  agents/                    agent logic: runtime.ts (durable LangGraph wrapper), graph/ (the state machine, see §5),
-                             registry.ts (tool catalog), tenant-runtime.ts + tenant-tools.ts (dashboard AI-SDK streaming),
-                             errors.ts, pricing.ts (cost calculator), date-validation.ts
-  agents/graph/              LangGraph: state.ts, nodes.ts, edges.ts, graph.ts, supervisor.ts, tools.ts, hitl.ts, index.ts
+  services/                  data-access layer — one file per aggregate (tenants, plans, bookings,
+                             automations, integration, kb, chat-sessions, …). Every service filters
+                             by tenant_id and throws HttpError.
+  agents/                    agent logic: provider.ts (models/pricing/SDK factories — THE source
+                             of truth), runtime.ts (durable LangGraph wrapper), graph/ (the state
+                             machine, see §5), registry.ts (tool catalog — buildAgentTools appends
+                             capture tools), tenant-runtime.ts + tenant-tools.ts (dashboard chat
+                             tools), errors.ts, pricing.ts (re-exports calculateCost from
+                             provider.ts), date-validation.ts
+  agents/graph/              LangGraph: state.ts, nodes.ts, edges.ts, graph.ts, supervisor.ts,
+                             tools.ts (async, appends capture tools), hitl.ts, index.ts
+  automations/               custom automations: types.ts (Zod step/trigger schemas), capture-tool.ts
+                             (AI-field-capture tools, named `capture_<automationId>`), executors.ts
+                             (one executor per step type), trigger.ts (emit automation/triggered)
+  integrations/              oauth-providers.ts (provider registry — the ONLY file that changes to
+                             add a Zoho/QuickBooks/Xero-style provider), token-refresh.ts
+                             (getValidAccessToken, refresh-token grant for every provider)
   channels/                  ChannelAdapter interface + registry + whatsapp/mail adapters
-  crypto/whatsapp-crypto.ts  WhatsApp Flow payload decryption
-  entitlements/resolve.ts    plan limits → Entitlements resolution
-  inngest/functions/         every background function
-  inngest/events.ts          the typed event catalog (source of truth for event shapes)
+  crypto/credentials.ts      AES-256-GCM encrypt/decrypt for integration credentials at rest
+  crypto/whatsapp-crypto.ts  WhatsApp Flow payload decryption + Meta webhook signature check
+  entitlements/resolve.ts    plan limits → Entitlements resolution (+ token_budget_topup)
+  inngest/functions/         every background function (incl. automation-run)
+  inngest/events.ts          the typed event catalog (Inngest v4 `eventType()`) — source of truth for event shapes
   meta/whatsapp.ts           Meta Graph API calls (templates, send)
   format.ts                  formatCurrency (USD/INR) with Intl.NumberFormat
 
 hooks/
+  use-api.ts                 client-side API fetch wrapper
   use-currency.ts            client-side currency hook (syncs with tenant DB preference)
 
 supabase/migrations/         SQL migrations, applied in order
@@ -77,12 +101,14 @@ docs/                        guide, rest-api reference, api-guide, llms/, this f
 **Tenant-scoped routes** (`app/api/tenants/[tenantId]/`):
 
 ```
-agents/                      appointment-services/    availability-rules/
-bookings/                    businesses/              contacts/
-contacts/[contactId]/        conversations/           currency/
-entitlements/                kb-documents/            mail-accounts/
-members/                     resources/               templates/
-usage/                       wa-accounts/
+agent/ (approve/reject HITL)   agents/                        appointment-services/
+automations/ (+ enabled-tools, [id]/, [id]/duplicate, [id]/runs)   availability-rules/
+bookings/                      businesses/                   chat/ (+ chat/sessions/)
+contacts/ (+ [contactId])      conversations/                currency/
+entitlements/                  integrations/ (+ [id], oauth/start, oauth/status)
+kb-documents/                  mail-accounts/                members/
+resources/                     templates/                    usage/
+wa-accounts/
 ```
 
 Route handlers import `lib/services/*` — they never talk to Postgres or Meta
@@ -116,18 +142,27 @@ gitignored):
 | `NEXT_PUBLIC_SUPABASE_URL` | yes | admin client, auth guard, browser client |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | auth guard (session cookie), browser client |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | admin client (bypasses RLS) |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | yes | Google Gemini via `@ai-sdk/google` *and* LangChain's `ChatGoogleGenerativeAI`. Note: `@ai-sdk/google` reads this env var automatically, but LangChain does **not** — it is passed explicitly via the `apiKey` field in `lib/agents/graph/nodes.ts` and `lib/agents/graph/supervisor.ts`. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | for google | Google Gemini via `@ai-sdk/google` *and* LangChain's `ChatGoogleGenerativeAI`. Note: `@ai-sdk/google` reads this env var automatically, but LangChain does **not** — it is passed explicitly via `getLangChainModel()` in `lib/agents/provider.ts`. |
+| `GROQ_API_KEY` | for groq | Groq via `@ai-sdk/groq` *and* `ChatGroq` — used only if a model's provider is `groq` or `ACTIVE_PROVIDER` is switched in `lib/agents/provider.ts`. |
 | `WHATSAPP_VERIFY_TOKEN` | for WA | webhook GET verification |
 | `META_APP_SECRET` | for WA | webhook signature validation |
 | `WHATSAPP_API_KEY` | for WA | Meta Graph API bearer token |
 | `FLOW_PRIVATE_KEY_PEM`, `FLOW_PRIVATE_KEY_PASSPHRASE` | for flows | WhatsApp Flow payload decryption |
 | `RESEND_API_KEY` | for mail | Resend adapter |
-| `AI_MODEL` | no | default agent model (defaults in `lib/agents/runtime.ts`) |
+| `AI_MODEL` | no | default agent model (falls back to `DEFAULT_MODEL` in `lib/agents/provider.ts`) |
 | `INNGEST_DEV` | dev | set to `"1"` to route Inngest calls to the local dev server |
+| `INNGEST_SIGNING_KEY`, `INNGEST_EVENT_KEY` | prod | Inngest signing/event keys — set automatically by the Vercel integration |
 | `NEXT_PUBLIC_SITE_URL` | no | base URL for invite links (defaults to `http://localhost:3000`) |
+| `CREDENTIALS_ENCRYPTION_KEY` | for stored creds | hex key for AES-256-GCM encryption of integration credentials (`lib/crypto/credentials.ts`); mandatory once any generic integration saves a credential |
+| `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET` | for Zoho OAuth | Zoho Invoice OAuth app (used only if an integration is created with type `zoho_invoice`) |
+| `QUICKBOOKS_CLIENT_ID`, `QUICKBOOKS_CLIENT_SECRET` | for QuickBooks OAuth | QuickBooks OAuth app (integration type `quickbooks`). Other providers need their own `{ID,SECRET}` pair named in `lib/integrations/oauth-providers.ts` |
 
 > Note: `NEXT_PUBLIC_` vars are exposed to the browser build; `SUPABASE_SERVICE_ROLE_KEY`
 > must never appear in client code.
+
+> Note: Inngest v4 has checkpointing enabled by default. `lib/clients/ingest.ts` is
+> configured with `checkpointing.maxRuntime: "50s"`, so `/api/inngest` exports
+> `maxDuration = 60` to stay within the runtime cap on serverless platforms.
 
 ---
 
@@ -144,26 +179,35 @@ Meta/Resend webhook ──▶ route handler (ACK < 5s, dedup check, enqueue only
                             │ emit message/inbound
                             ▼
                 Inngest: message/inbound  ← the orchestration function
-                  resolve tenant + agent + entitlements → run the LangGraph agent
-                  (lib/agents/runtime.ts → graph.invoke, a state machine over
-                  agent/tools/final nodes, see §5) → calculate cost via pricing.ts
-                  (tokens × model rate) → persist messages + usage_events (with
-                  cost_usd) → bump usage_counters (tokens_used + cost_usd) →
-                  emit message/outbound.send
+                  resolve entitlements → hasTokenBudget() (hard/soft per plan)
+                  → fall back to a budget-exhausted notice if over → else load
+                  conversation + history, assign a fallback agent if the
+                  conversation has none → run the LangGraph agent
+(lib/agents/runtime.ts → graph.invoke, a state machine over
+                  agent/tools/final nodes, see §5) → cost via calculateCost (provider.ts)
+                  → persist messages + usage_events (with cost_usd) → bump
+                    usage_counters (tokens_used + cost_usd) → emit message/outbound.send
+                    → emit automation/triggered for every active after_agent_reply
+                      automation (lib/automations/trigger.ts, fired from inside
+                      message-inbound after the reply is persisted)
                             │
                             ▼
-                Inngest: outbound-message
-                  channel adapter (WhatsApp template/text) → Meta/Resend
+                  Inngest: outbound-message
+                    channel adapter (WhatsApp template/text/flow) → Meta/Resend
 ```
 
 ### Outbound (dashboard/agent → customer)
 
 Any outbound send enqueues `message/outbound.send` via
-`lib/services/wa-send.ts` (or `lib/channels/` for the adapter path). The route
+`lib/services/messages.ts` (`enqueueOutboundMessage`; `lib/services/wa-send.ts`
+for the ad-hoc route path) or `lib/channels/` for the adapter path. The route
 creates a `messages` row with status `queued` and returns immediately; the
 Inngest function performs the actual Meta/Resend call and retries on failure.
 Delivery callbacks (`sent/delivered/read/failed`) arrive on the WhatsApp status
-webhook and update the row.
+webhook; `whatsapp-webhook-ingest` applies them inline to the `messages` row.
+Bulk template campaigns enqueue `whatsapp/bulk.send`, which
+`bulk-send-template` fans out into individual `message/outbound.send` events in
+chunks of 5.
 
 ### Everything is durable
 
@@ -176,10 +220,51 @@ The full event catalog (names + payload schemas) lives in
 `lib/inngest/events.ts` — **that file is the contract** between producers and
 consumers. Add events there, not ad-hoc strings.
 
-Inngest functions: `whatsapp-webhook-received`, `mail-webhook-received`,
-`message-inbound`, `outbound-message`, `scheduled-message-runner`,
-`usage-reconcile`, `kb-chunk` (kb/document.uploaded), `booking-reminder`
-(booking/reminder.due), `flow-data-exchange` (flow/data.exchange).
+Inngest functions (all registered in `app/api/inngest/route.ts`):
+`whatsapp-webhook-ingest`, `mail-webhook-ingest`, `message-inbound`,
+`outbound-message`, `scheduled-message-runner`, `usage-reconcile`,
+`kb-document-chunker` (kb/document.uploaded), `booking-reminder`
+(booking/reminder.due), `flow-data-exchange` (flow/data.exchange),
+`bulk-send-template` (whatsapp/bulk.send), `automation-run`
+(automation/triggered — the durable executor of custom automations, see §4a).
+
+### 4a. Custom automations
+
+An automation is a pipeline of steps (`lib/automations/types.ts` Zod
+schemas, stored in `automations.steps`) that fires on one of four triggers:
+
+| Trigger | Emission point |
+|---|---|
+| `after_agent_reply` | `emitAfterAgentReply` — called from `message-inbound` in a step after the reply is persisted |
+| `on_tool_call` | `emitOnToolCall` — called by `createAutomationToolNode` / `createHitlToolNode` after a tool executes, matched by `trigger_config.tool_name` |
+| `ai_capture` | `lib/automations/capture-tool.ts` registers a LangGraph tool named `capture_<automationId>` on the agent (plus the dashboard AI-SDK loop via `buildAgentTools`); executing it emits `automation/triggered` with the captured fields as top-level `variables` |
+| `manual` | fired on demand from a conversation (no emission helper yet) |
+
+`lib/automations/trigger.ts` emits one `automation/triggered` event per
+matching active automation; scoping is `agent_id null = all agents`, else the
+exact agent. The durable function `automation-run`
+(`lib/inngest/functions/automation-run.ts`) owns the run: it resolves context
+(automation, contact, active WhatsApp account, last inbound user message),
+creates an `automation_runs` row, executes each step in its own `step.run()`
+(accumulating outputs as `variables["step_N"]`), honors `wait` steps via
+`step.sleep()`, and mark-fails + rethrows on the first error.
+
+Step executors (`lib/automations/executors.ts`) are one function per step
+type — `api_call`, `send_message`, `send_template`, `send_document`,
+`tag_contact`, `wait` — looked up from a dictionary (mirroring the tool
+registry). Rules that matter:
+
+- **`api_call`** resolves either an `integrationId` (a configured integration)
+  or a raw `url`. Integration calls auto-attach `Authorization: Bearer` for
+  OAuth-backed integrations (`getValidAccessToken`, which refreshes via the
+  provider's tokenUrl when the access token is near expiry) and interpolate
+  `{{integration.credential}}` in headers/url/body for generic integrations
+  (`recursiveInterpolate`). **Request headers and decrypted credentials must
+  never appear in `step_results`** — only response bodies do.
+- Every string template is recursively interpolated from the run's `variables`
+  (captured fields + prior step outputs) and contact metadata.
+- `automation_runs.step_results` collects `{index,type,status,output,error}`
+  for the run-history UI.
 
 ---
 
@@ -194,15 +279,17 @@ keeping Vercel AI SDK only for the dashboard chat streaming path (see
 
 | File | Role |
 |---|---|
-| `runtime.ts` | Durable wrapper: builds the graph and invokes it inside **one** `step.run()`; extracts text / usage / diagnostics from the result. |
+| `provider.ts` | **Single source of truth** for models, pricing, provider routing (`ACTIVE_PROVIDER`, `MODELS`, `PRICING`), and SDK factories (`getAISDKModel`, `getLangChainModel`). Both the AI-SDK and LangGraph paths derive from here. |
+| `runtime.ts` | Durable wrapper: builds the graph and invokes it inside **one** `step.run()`; extracts text / usage / diagnostics from the result via `graphMessageType`/`graphMessageContent`/`graphMessageUsage`. Exports `historyFromDb` to convert stored message rows into `ModelMessage[]`. |
 | `graph/state.ts` | The `AgentState` schema (messages reducer, `iteration`, `metadata`). |
-| `graph/nodes.ts` | `createAgentNode`, `createToolNode`, `createHitlToolNode`, `buildSystemPrompt`. |
+| `graph/nodes.ts` | `createAgentNode`, `createToolNode`, `createAutomationToolNode`, `createHitlToolNode`, `buildSystemPrompt`. System prompt includes a live datetime block and booking-specific instructions. Uses `getLangChainModel`. |
 | `graph/edges.ts` | `shouldContinue`, `nextAfterTools`, `MAX_TOOL_ITERATIONS`. |
-| `graph/tools.ts` | `buildLangChainTools` — wraps the AI-SDK tool registry as LangChain tools. |
-| `graph/graph.ts` | `buildAgentGraph` — the standard single-agent graph. |
-| `graph/supervisor.ts` | `buildSupervisorGraph` — multi-agent supervisor routing. |
+| `graph/tools.ts` | `buildLangChainTools(agentTools, ctx, agentId?)` — **async**, wraps the AI-SDK tool registry as LangChain `tool()` calls, then appends the tenant's active `ai_capture` capture tools. |
+| `graph/graph.ts` | `buildAgentGraph` — the standard single-agent graph (async; wires `createAutomationToolNode`). |
+| `graph/supervisor.ts` | `buildSupervisorGraph` — multi-agent supervisor routing (async). |
 | `graph/hitl.ts` | Human-in-the-loop: `requiresApproval`, `storePendingAction`, `approve`/`reject`. |
-| `tenant-runtime.ts` / `tenant-tools.ts` | **Unchanged** AI-SDK `streamText` path used by the dashboard chat (`lib/agents/tenant-runtime.ts`), not by the inbound pipeline. |
+| `tenant-runtime.ts` | **Dashboard chat path only** — `ToolLoopAgent` (AI SDK `ai` package) with `getAISDKModel`, not used by the inbound pipeline. |
+| `tenant-tools.ts` | Dashboard-only tools: contact/business/service/resource/conversation read & CRUD, `list_bookings`, `bulk_send_template`, `create_template` (returns a `PENDING_PREVIEW` draft the UI must approve before submitting to Meta), `delete_template`, `list_kb_documents`, `get_usage_summary`. |
 
 ### 5.2 State
 
@@ -232,8 +319,10 @@ START → agent ──(shouldContinue)──▶ END
 - **`agent`** — calls `ChatGoogleGenerativeAI.bindTools(tools)` and returns one
   `AIMessage`. If a model is given `[]` tools (the `final` node), it is **not**
   bound to tools.
-- **`tools`** — the prebuilt `ToolNode`, executes every tool call from the last
-  AI message and returns `ToolMessage`s.
+- **`tools`** — `createAutomationToolNode` (a wrapper around the prebuilt
+  `ToolNode`): executes every tool call from the last AI message, emits
+  `automation/triggered` via `emitOnToolCall` for matching `on_tool_call`
+  automations, and returns `ToolMessage`s.
 - **`shouldContinue`** — after `agent`: if the last message has `tool_calls`,
   go to `tools`; otherwise `END`.
 - **`nextAfterTools`** — after `tools`: if `iteration >= MAX_TOOL_ITERATIONS`
@@ -247,13 +336,15 @@ START → agent ──(shouldContinue)──▶ END
 
 When `agent.type === "supervisor"`, `runtime.ts` builds a supervisor graph
 instead. It reuses `AgentState` plus a `next` field. A lightweight classifier
-node (`gemini-3.1-flash-lite`, temperature 0) labels the message
+node (`DEFAULT_MODEL`, temperature 0) labels the message
 `faq | booking | template | escalation` and routes to the matching sub-agent.
 Each sub-agent gets its own `{category}`, `{category}-tools`, and
 `{category}-final` nodes wired with the same `shouldContinue`/`nextAfterTools`
-edges. `ROUTE_MAP` in `supervisor.ts` defines each sub-agent's tools, prompt,
-and model (booking uses `gemini-1.5-pro`; the rest `gemini-3.1-flash-lite`).
-Only sub-agents whose tools are enabled for the tenant get nodes (empty ones are
+edges. `ROUTE_MAP` in `supervisor.ts` defines each sub-agent's tools and
+prompt; all sub-agents and the classifier now use `DEFAULT_MODEL` from
+`provider.ts` (the classifier runs at temperature 0 — there is no longer a
+per-route model override like the old `gemini-1.5-pro` booking model). Only
+sub-agents whose tools are enabled for the tenant get nodes (empty ones are
 skipped, and unknown classifier output falls back to `faq`).
 
 ### 5.5 `runDurableAgent` — the serialization-critical wrapper
@@ -263,6 +354,11 @@ skipped, and unknown classifier output falls back to `faq`).
 steps: a compiled graph contains methods and closures that Inngest cannot JSON-
 serialize across a `step.run()` boundary, so the graph would come back from the
 checkpoint as an inert object with no `invoke()`.
+
+Graph builders are now **async** (`await buildAgentGraph(…)` /
+`await buildSupervisorGraph(…)`) because tool construction hits the DB for
+capture tools. `BuildGraphInput` carries `agentId` so `buildLangChainTools`
+can append that agent's active `ai_capture` capture tools.
 
 The second consequence of `step.run()` is that **LangChain message instances
 are checkpointed as plain serialized JSON**, e.g.:
@@ -287,13 +383,15 @@ form:
 
 ```
 { text, iterations, endedWithToolCall, finalMessageType,
-  generatedAssistantMessages, usage: {inputTokens, outputTokens, totalTokens}, cost }
+  generatedAssistantMessages, lastToolResult?,
+  usage: {inputTokens, outputTokens, totalTokens}, cost }
 ```
 
-`message-inbound.ts` uses `text` for the reply, the usage fields for metering,
-and the diagnostic fields (`endedWithToolCall`, `finalMessageType`,
-`generatedAssistantMessages`) when it has to fall back to a canned "please give
-us a moment" reply on empty output.
+`message-inbound.ts` uses `text` for the reply (falling back to
+`lastToolResult` — the most recent tool outcome, e.g. a failure detail — and
+then to a canned "please give us a moment" reply), the usage fields for
+metering, and the diagnostic fields (`endedWithToolCall`, `finalMessageType`,
+`generatedAssistantMessages`) when it has to fall back.
 
 ### 5.6 Tool conversion — and the Gemini schema constraint
 
@@ -301,6 +399,16 @@ us a moment" reply on empty output.
 `lib/agents/registry.ts` and wraps each `def.execute` into a
 `DynamicStructuredTool` with `schema: def.parameters`. **Tools stay defined once
 in the AI-SDK format; `agent_tools` rows only toggle which get wrapped.**
+
+It is now **async** and takes `agentId`. After wrapping the enabled registry
+tools it appends `buildCaptureTools(tenantId, agentId)`
+(`lib/automations/capture-tool.ts`): every active `ai_capture` automation whose
+`agent_id` matches (or is null) becomes a LangGraph tool named
+`capture_<automationId>` whose schema is derived from `trigger_config.fields`.
+Executing one stores the captured values on the contact (per `saveToContact`)
+and emits `automation/triggered` with those fields as top-level variables. The
+dashboard AI-SDK chat path does the same in `buildAgentTools`
+(`lib/agents/registry.ts`), so capture tools exist in both runtimes.
 
 Gemini's function-calling schema has a constraint worth memorizing: it does not
 understand the JSON-Schema `propertyNames` keyword, which Zod's `z.record()`
@@ -328,9 +436,10 @@ via `components/pending-action-card.tsx`, and
 
 > **Known gap:** today approval only flips the DB row to `approved`. Nothing yet
 > executes the approved tool or automatically follows up with the customer, and
-> the standard `buildAgentGraph` still wires `createToolNode` (not
-> `createHitlToolNode`), so approval-based pausing is not on the active inbound
-> path. See `docs/prompts/langgraph-integration.md` §3.1 for the two intended
+> the standard `buildAgentGraph` wires `createAutomationToolNode` (a plain
+> `ToolNode` + `emitOnToolCall`) — not `createHitlToolNode` — so
+> approval-based pausing is not on the active inbound path. See
+> `docs/prompts/langgraph-integration.md` §3.1 for the two intended
 > implementations (a follow-up Inngest function vs. real LangGraph
 > `interrupt()`/`Command.resume()` with a persistent checkpointer).
 
@@ -390,9 +499,12 @@ canonical shape is enforced by the Zod schema `planLimitsSchema` in
 
 Unknown keys are stripped on write. `resolveEntitlements(tenantId)` in
 `lib/entitlements/resolve.ts` reads the active subscription → plan limits →
-defaults and returns a resolved `Entitlements` object. **Downstream checks read
-that object, never `plans` directly.** If you add a limit key, update the Zod
-schema *and* `DEFAULTS` in resolve.ts.
+defaults, adds any `tenants.token_budget_topup` (set by god users) to the
+monthly token budget, and returns a resolved `Entitlements` object. **Downstream
+checks read that object, never `plans` directly.** The `hasTokenBudget()`
+helper (same file) reads `usage_counters` against the resolved budget without
+bumping any counters. If you add a limit key, update the Zod schema *and*
+`DEFAULTS` in resolve.ts.
 
 ---
 
@@ -423,8 +535,18 @@ schema *and* `DEFAULTS` in resolve.ts.
    `handleError(e)` on catch so `HttpError` statuses propagate.
 10. **Don't add comments unless they explain *why*** (not what) — the codebase
     keeps them for schema shapes, FK ordering, and gotchas only.
-11. **Cost calculation lives in `lib/agents/pricing.ts`** — `calculateCost(model, inputTokens, outputTokens)` returns USD cost. The pricing map covers all current Gemini models (Aug 2026 rates). When adding new models, update the `PRICING` map. Cost is stored in `usage_events.cost_usd` and `usage_counters.cost_usd`. The frontend reads it via the `/api/tenants/[tenantId]/usage` endpoint and formats it with `formatCurrency()` from `lib/format.ts`.
+11. **Cost calculation lives in `lib/agents/provider.ts`** — the `PRICING` map
+    is defined there (Gemini + Groq, per-1M-token rates) and `calculateCost(model, inputTokens, outputTokens)`
+    is re-exported via `lib/agents/pricing.ts`. Returns USD cost. Cost is stored
+    in `usage_events.cost_usd` and `usage_counters.cost_usd`. The frontend reads
+    it via the `/api/tenants/[tenantId]/usage` endpoint and formats it with
+    `formatCurrency()` from `lib/format.ts`. *When adding or renaming models,
+    update `MODELS` and `PRICING` in `provider.ts` (and the UI model dropdowns
+    build from the same `MODELS` list).*
 12. **Currency preference is per-tenant** — stored in `tenants.currency` (`'USD'` | `'INR'`). The `useCurrency()` hook reads from tenant context and persists via `PATCH /api/tenants/[tenantId]/currency`. The conversion rate is hardcoded in `lib/format.ts` (`CONVERSION_RATE_INR = 83.5`). All costs are stored in USD; conversion happens only at display time.
+13. **Integration credentials are encrypted at rest** — `lib/crypto/credentials.ts` with AES-256-GCM (`CREDENTIALS_ENCRYPTION_KEY`, hex). Services store `new Uint8Array(0)` when no credential exists; `hasCredentials` is `byteLength >= 28`. Never store a plaintext credential.
+14. **OAuth is one shared shape** — adding a provider means one entry in `lib/integrations/oauth-providers.ts` (two URLs, scopes, extra params, optional callback non-token field). `/oauth/start` mints a one-time `oauth_states` row, `/api/auth/oauth/callback` exchanges the code and stores tokens. Tokens auto-refresh via `getValidAccessToken`. Everything else (state table, encryption, refresh) never changes per provider.
+15. **Automation steps must never leak secrets** — `step_results` stores response bodies only. Generic-integration credentials are exposed exclusively via `{{integration.credential}}` interpolation (never auto-injected as headers); OAuth integrations get an auto `Authorization: Bearer`. Capture tools are named `capture_<automationId>` to stay unique per automation.
 
 ---
 
@@ -453,33 +575,49 @@ Full schema in `supabase/migrations/001_initial-schema.sql` (730 lines, sections
 campaign_schedules), `003_ingest_pipeline.sql` (scheduled messages + usage RPCs),
 `004_agent_tool_seed.sql` (tool backfill for existing agents),
 `005_tenant_owner_email.sql`, `006_wa_account_credentials.sql`,
-`007_max_businesses.sql`, `008_backfill_missing_agent_tools.sql`
-(cancel_booking, list_resources, schedule_reminder),
-`009_backfill_template_and_datetime_tools.sql` (create_template,
-get_current_datetime), `010_usage_events_cost_column.sql` (cost_usd on
-usage_events), `011_tenants_currency.sql` (currency preference on tenants),
-`012_tenant_chat_sessions.sql` (dashboard chat `chat_sessions`), and
-`013_add_hitl.sql` (HITL: `agent_tools.approval_required` +
-`agent_pending_actions`).
+`007_tenant_business_limit.sql` (per-tenant `max_businesses` cap),
+`008_backfill_missing_agent_tools.sql` (cancel_booking, list_resources,
+schedule_reminder), `009_backfill_template_and_datetime_tools.sql`
+(create_template, get_current_datetime), `010_usage_events_cost_column.sql`
+(cost_usd on usage_events), `011_tenants_currency.sql` (currency preference on
+tenants), `012_tenant_chat_sessions.sql` (dashboard chat `chat_sessions` +
+`chat_messages`), `013_add_hitl.sql` (HITL: `agent_tools.approval_required` +
+`agent_pending_actions`), `014_fix_recompute_usage_cost.sql` (bugfix so
+`recompute_usage_counters()` re-aggregates `cost_usd`, not just tokens),
+`015_tenant_token_topup.sql` (`tenants.token_budget_topup` — god-user top-ups
+that add to the plan's `token_budget_monthly`), `016_add_automations.sql`
+(custom automations: `automations`, `automation_runs`, `integrations`),
+and `017_add_oauth_states.sql` (single-use `oauth_states` rows for the
+integration OAuth handshake).
 
 Highlights:
-- **Platform:** `god_users`, `tenants` (with `currency` preference), `tenant_members`, `plans`,
-  `subscriptions`, `usage_counters` (period buckets with `tokens_used` + `cost_usd`),
-  `usage_events` (per-call audit trail with `prompt_tokens`, `completion_tokens`,
-  `total_tokens`, `cost_usd`, `model`).
+- **Platform:** `god_users`, `tenants` (with `currency` preference,
+  `max_businesses`, `token_budget_topup`), `tenant_members`, `plans`,
+  `subscriptions`, `usage_counters` (period buckets with `tokens_used` +
+  `cost_usd`), `usage_events` (per-call audit trail with `prompt_tokens`,
+  `completion_tokens`, `total_tokens`, `cost_usd`, `model`).
 - **Channels:** `wa_accounts`, `mail_accounts`, `whatsapp_templates`.
 - **Conversations:** `contacts`, `conversations`, `messages`, `scheduled_messages`,
-  `webhook_events` (idempotency), `chat_sessions` (dashboard chat).
+  `webhook_events` (idempotency), `chat_sessions` + `chat_messages` (dashboard chat).
 - **Booking engine:** `businesses`, `resources`, `services`, `service_schemas`,
   `availability_rules`/`availability_exceptions`, `bookings`.
+- **Automations:** `automations` (name, `agent_id`, `is_active`,
+  `trigger_type` with check constraint incl. `ai_capture`, `trigger_config`
+  JSONB, `steps` JSONB), `automation_runs` (status running/completed/failed,
+  `step_results` JSONB), `integrations` (`type` incl. OAuth provider ids,
+  `base_url`, `config`, AES-encrypted `credentials_encrypted` bytea),
+  `oauth_states` (one-time handshake rows).
 - **AI:** `agents`, `agent_tools` (incl. `approval_required`),
   `agent_pending_actions` (HITL queue), `agent_channels`,
   `knowledge_base_documents` + `knowledge_base_chunks` (pgvector).
 
 **FK reality:** child tables have plain FKs (no `ON DELETE CASCADE`). Deletes
-must happen deepest-first. `deleteTenant` (`lib/services/tenants.ts`) and
-`deleteBusiness` (`lib/services/businesses.ts`) encode the correct ordering —
-if you add a table that references `tenants` or `businesses`, add it to those
+must happen deepest-first. `deleteTenant` (`lib/services/tenants.ts`) encodes
+the correct ordering — `automation_runs` (via `automation_id`) before
+conversations/contacts/automations, then `automations` (nullable `agent_id`,
+deleted directly by tenant), `integrations`, and `oauth_states` — and
+`deleteBusiness` (`lib/services/businesses.ts`) handles the business subtree.
+If you add a table that references `tenants` or `businesses`, add it to those
 delete lists.
 
 ---
@@ -508,6 +646,16 @@ There is no test suite yet. Typecheck + lint are the verification gate.
 - `@supabase/ssr` is used only for reading the session JWT in guards; route
   handlers can't write cookies, so the client's cookie `setAll` is a no-op.
 - The `supabase/.temp/` directory is CLI state — it's gitignored, don't commit it.
+- **Models, providers, and pricing all live in one file.** `lib/agents/provider.ts`
+  (`ACTIVE_PROVIDER`, `MODELS`, `PRICING`, `getAISDKModel`, `getLangChainModel`)
+  is the only place SDK classes are constructed and per-model costs are resolved.
+  Don't build `ChatGoogleGenerativeAI`/`google()`/`createGroq()`/`ChatGroq`
+  anywhere else — call the `get*Model` helpers so the UI dropdowns, costs, and
+  runtime all stay consistent. `lib/agents/pricing.ts` only re-exports `provider.ts`.
+- **The dashboard chat is not the inbox agent.** `tenant-runtime.ts` builds an
+  AI-SDK `ToolLoopAgent` for the operator chat at `/api/tenants/[tenantId]/chat`;
+  the inbound pipeline always uses `runDurableAgent`/LangGraph. Different models,
+  different tools (`tenant-tools.ts`), different streaming path.
 
 **LangGraph / Inngest (see §5 for detail):**
 - **A compiled LangGraph graph can't cross a `step.run()` boundary.** Inngest
@@ -518,8 +666,15 @@ There is no test suite yet. Typecheck + lint are the verification gate.
   `{ lc:1, type:"constructor", id:[...,"AIMessage"], kwargs:{…} }`. Use
   `graphMessageType`/`graphMessageContent`/`graphMessageUsage` in `runtime.ts`.
 - **LangChain doesn't read `GOOGLE_GENERATIVE_AI_API_KEY` automatically.** Pass it
-  explicitly as `apiKey` to every `ChatGoogleGenerativeAI` (nodes.ts, supervisor.ts);
-  `@ai-sdk/google` does read it automatically, which is why the old path worked.
+  explicitly as `apiKey` to every `ChatGoogleGenerativeAI` — via
+  `getLangChainModel` in `provider.ts`, never inline in nodes/supervisor.
+  `@ai-sdk/google` reads it automatically, which is why the old path worked.
+  Same for Groq: `GROQ_API_KEY` is passed explicitly (only to Groq models).
+- **Inngest v4 checkpointing is on by default.** `lib/clients/ingest.ts` sets
+  `checkpointing.maxRuntime: "50s"` and `/api/inngest` exports `maxDuration = 60`.
+  If you raise the runtime cap, keep the two in sync. Step output is still
+  JSON-serialized regardless — checkpointing doesn't change the
+  LangGraph/message caveats above.
 - **Gemini tool schemas reject `propertyNames`.** Avoid `z.record()` in tool
   parameters — it makes Gemini error with
   `Unknown name "propertyNames"`. Pass free-form maps as JSON strings instead
@@ -527,3 +682,20 @@ There is no test suite yet. Typecheck + lint are the verification gate.
 - **A run that ends on an AI *tool-call* message yields empty `text`.** The graph's
   `final` node exists precisely to force a tool-free closing reply once the tool
   budget is spent — don't remove it, or conversations will "hang" with no reply.
+
+**Custom automations & integrations:**
+- **`agent_id null` on an automation means "all agents".** `listActiveAutomationsForTrigger`
+  treats null as a wildcard and scopes by `agent_id` only when a specific agent is given.
+- **Inngest v4 forbids `.default()` in event schemas.** `automationTriggered.variables` is
+  required (`z.record(z.string(), z.unknown())`) — every emitter passes `variables` explicitly.
+- **One tools builder serves both runtimes.** `buildLangChainTools` (LangGraph) and
+  `buildAgentTools` (dashboard AI-SDK) both append capture tools, so an `ai_capture`
+  automation's fields work identically in the inbound pipeline and operator chat.
+- **`step.sleep(id, duration)` takes no type args** in Inngest v4; the automation `wait`
+  step passes a `"seconds"` string and accumulates prior outputs via `step.run` variables.
+- **OAuth providers are decrypting speed-bumps, not snowflakes.** The refresh is always
+  `grant_type=refresh_token` against the provider's `tokenUrl`; a non-OAuth integration
+  type hits `getValidAccessToken` only if you forgot the `isOAuthProviderType` guard.
+- **The OAuth callback redirects to a dashboard page**, never returns JSON:
+  `/dashboard/oauth-result?from=integration&success=1|0&name=&tenantId=` — keep that
+  page (and its `Suspense` wrapper, since it reads `useSearchParams`).

@@ -23,6 +23,7 @@ import {
   Users,
   Boxes,
   Wrench,
+  Workflow,
   Contact,
   PanelLeftClose,
   PanelLeftOpen,
@@ -55,6 +56,7 @@ const secondaryNav = [
   { href: "/dashboard/agents", label: "AI Agents", icon: Bot },
   { href: "/dashboard/knowledge", label: "Knowledge Base", icon: BookOpenText },
   { href: "/dashboard/templates", label: "WhatsApp Templates", icon: MailPlus },
+  { href: "/dashboard/automations", label: "Automations", icon: Workflow },
   { href: "/dashboard/usage", label: "Usage", icon: BarChart3 },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];

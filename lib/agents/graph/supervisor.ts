@@ -1,7 +1,7 @@
 import { StateGraph, START, END, Annotation } from "@langchain/langgraph";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { AgentState } from "./state";
-import { createAgentNode, createToolNode, buildSystemPrompt } from "./nodes";
+import { createAgentNode, createAutomationToolNode, buildSystemPrompt } from "./nodes";
 import { buildLangChainTools } from "./tools";
 import { nextAfterTools, shouldContinue } from "./edges";
 import type { AgentToolCtx } from "@/lib/agents/registry";
@@ -81,12 +81,12 @@ export async function buildSupervisorGraph(input: {
   const supervisorNode = createSupervisorNode(DEFAULT_MODEL);
 
   const subAgentNodes: Record<string, ReturnType<typeof createAgentNode>> = {};
-  const subAgentToolNodes: Record<string, ReturnType<typeof createToolNode>> = {};
+  const subAgentToolNodes: Record<string, ReturnType<typeof createAutomationToolNode>> = {};
   const finalAgentNodes: Record<string, ReturnType<typeof createAgentNode>> = {};
 
   for (const [category, config] of Object.entries(ROUTE_MAP)) {
     const agentTools = config.tools.filter((t) => input.enabledTools.includes(t));
-    const lcTools = buildLangChainTools(agentTools, input.ctx);
+    const lcTools = await buildLangChainTools(agentTools, input.ctx, input.agentId);
     const systemPrompt = await buildSystemPrompt(
       `${input.instructions}\n\n${config.prompt}`,
       input.ctx.tenantId,
@@ -98,7 +98,7 @@ export async function buildSupervisorGraph(input: {
       systemPrompt,
       lcTools,
     );
-    subAgentToolNodes[category] = createToolNode(lcTools);
+    subAgentToolNodes[category] = createAutomationToolNode(lcTools, input.agentId);
     finalAgentNodes[category] = createAgentNode(
       config.model ?? DEFAULT_MODEL,
       `${systemPrompt}\n\nYou have completed the available tool actions. Give the customer a concise final response based on the conversation and tool results. Do not call any tools.`,

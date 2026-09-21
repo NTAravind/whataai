@@ -233,9 +233,18 @@ const TENANT_DELETE_ORDER: DeleteStep[] = [
   { table: "scheduled_messages" },
   // messages -> conversations
   { table: "messages", parentColumn: "conversation_id", parentTable: "conversations" },
+  // automation_runs -> conversations / contacts / automations (delete before
+  // any of those three go away)
+  { table: "automation_runs", parentColumn: "automation_id", parentTable: "automations" },
   // conversations -> contacts / agents
   { table: "conversations" },
   { table: "contacts" },
+  // automations -> agents (agent_id is nullable, so delete by tenant_id)
+  { table: "automations" },
+  // integrations -> tenants
+  { table: "integrations" },
+  // oauth_states -> tenants (single-use OAuth handshake rows)
+  { table: "oauth_states" },
   // agent_tools / agent_channels -> agents
   { table: "agent_tools", parentColumn: "agent_id", parentTable: "agents" },
   { table: "agent_channels", parentColumn: "agent_id", parentTable: "agents" },

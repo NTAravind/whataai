@@ -1,10 +1,11 @@
 import { AIMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { AgentState } from "./state";
-import { buildLangChainTools } from "./tools";
+import type { DynamicStructuredTool } from "@langchain/core/tools";
 import { getBusinessContextPrompt } from "@/lib/services/businesses";
 import { requiresApproval, storePendingAction } from "./hitl";
 import { getLangChainModel } from "../provider";
+import { emitOnToolCall } from "@/lib/automations/trigger";
 
 function buildDateTimeBlock(timezone: string): string {
   const now = new Date();
@@ -56,7 +57,7 @@ export async function buildSystemPrompt(
 export function createAgentNode(
   modelName: string,
   systemPrompt: string,
-  lcTools: ReturnType<typeof buildLangChainTools>,
+  lcTools: DynamicStructuredTool[],
 ) {
   const model = getLangChainModel(modelName, 0.7);
   const llm = lcTools.length > 0 ? model.bindTools(lcTools) : model;
@@ -77,13 +78,49 @@ export function createAgentNode(
 }
 
 export function createToolNode(
-  lcTools: ReturnType<typeof buildLangChainTools>,
+  lcTools: DynamicStructuredTool[],
 ) {
   return new ToolNode(lcTools);
 }
 
+/**
+ * Tool node that fires `on_tool_call` automations after each tool that matches
+ * an active automation's `trigger_config.tool_name` has executed. Used for
+ * non-HITL agents; HITL agents get the same emission inside
+ * `createHitlToolNode`.
+ */
+export function createAutomationToolNode(
+  lcTools: DynamicStructuredTool[],
+  agentId: string,
+) {
+  return async (state: typeof AgentState.State) => {
+    const toolNode = new ToolNode(lcTools);
+    const results = (await toolNode.invoke(state)) as { messages: ToolMessage[] };
+
+    const lastMessage = state.messages[state.messages.length - 1];
+    if (lastMessage instanceof AIMessage && lastMessage.tool_calls?.length) {
+      const meta = state.metadata as {
+        tenantId?: string;
+        conversationId?: string;
+        contactId?: string;
+      };
+      for (const tc of lastMessage.tool_calls) {
+        await emitOnToolCall({
+          tenantId: meta.tenantId ?? "",
+          agentId,
+          conversationId: meta.conversationId,
+          contactId: meta.contactId,
+          toolName: tc.name,
+        });
+      }
+    }
+
+    return results;
+  };
+}
+
 export function createHitlToolNode(
-  lcTools: ReturnType<typeof buildLangChainTools>,
+  lcTools: DynamicStructuredTool[],
   agentId: string,
 ) {
   return async (state: typeof AgentState.State) => {
@@ -124,6 +161,13 @@ export function createHitlToolNode(
             results.push(
               new ToolMessage({ content: String(output), tool_call_id: tc.id ?? "" }),
             );
+            await emitOnToolCall({
+              tenantId: state.metadata.tenantId,
+              agentId,
+              conversationId: state.metadata.conversationId,
+              contactId: state.metadata.contactId,
+              toolName: tc.name,
+            });
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
             results.push(

@@ -5,6 +5,7 @@ import { loadConversationContext, listMessages, pickAgentForConversation } from 
 import { runDurableAgent, historyFromDb } from "@/lib/agents/runtime";
 import { resolveEntitlements, hasTokenBudget } from "@/lib/entitlements/resolve";
 import { enqueueOutboundMessage } from "@/lib/services/messages";
+import { emitAfterAgentReply } from "@/lib/automations/trigger";
 
 /**
  * Core orchestration function (docs/guide.md §7 — `message.inbound`).
@@ -148,6 +149,15 @@ export const messageInboundFunction = inngest.createFunction(
       });
       return message.id;
     });
+    await step.run("after-reply-automations", async () => {
+      await emitAfterAgentReply({
+        tenantId: d.tenantId,
+        agentId: agent.id,
+        conversationId: d.conversationId,
+        contactId: d.contactId,
+      });
+    });
+
     logger.info("outbound agent reply enqueued", {
       conversationId: d.conversationId,
       messageId: sent,

@@ -53,6 +53,15 @@ export interface FlowRef {
   data?: Record<string, unknown>;
 }
 
+export interface DocumentRef {
+  /** A media id previously uploaded to the provider. */
+  mediaId?: string;
+  /** A public URL the provider can fetch directly. */
+  link?: string;
+  filename?: string;
+  caption?: string;
+}
+
 export interface ChannelAdapter {
   channel: Channel;
 
@@ -64,6 +73,9 @@ export interface ChannelAdapter {
 
   /** Trigger a WhatsApp Flow (structured data collection). */
   triggerFlow?(ctx: ChannelCtx, to: string, flow: FlowRef): Promise<SendResult>;
+
+  /** Send a document via media id or public link. */
+  sendDocument?(ctx: ChannelCtx, to: string, document: DocumentRef): Promise<SendResult>;
 
   /** Parse a raw webhook payload into normalized inbound messages. */
   parseWebhook(raw: unknown): {

@@ -84,6 +84,16 @@ export const outboundMessage = inngest.createFunction(
           components: bodyParameters ?? template.components ?? undefined,
         }),
       );
+    } else if (d.content.type === "document" && adapter.sendDocument) {
+      const docMeta = (d.content.meta ?? {}) as { mediaId?: string; link?: string; filename?: string; caption?: string };
+      result = await step.run("send-document", () =>
+        adapter.sendDocument!(ctx, d.senderId, {
+          mediaId: docMeta.mediaId,
+          link: docMeta.link,
+          filename: docMeta.filename,
+          caption: docMeta.caption,
+        }),
+      );
     } else if (d.content.type === "flow" && adapter.triggerFlow) {
       result = await step.run("send-flow", () =>
         adapter.triggerFlow!(ctx, d.senderId, {

@@ -159,6 +159,97 @@ export async function sendTemplateMessage({
   return json as { messaging_product: string; contacts: unknown[]; messages: { id: string }[] };
 }
 
+export interface SendDocumentInput {
+  phoneNumberId: string;
+  to: string;
+  /** A media id previously returned by `uploadMedia`. */
+  mediaId?: string;
+  /** A public URL Meta can fetch. Takes precedence only when mediaId is absent. */
+  link?: string;
+  filename?: string;
+  caption?: string;
+  /** Per-account token; falls back to WHATSAPP_API_KEY. */
+  accessToken?: string;
+}
+
+/** Send a document message (type=document) via media id or public link. */
+export async function sendDocumentMessage({
+  phoneNumberId,
+  to,
+  mediaId,
+  link,
+  filename,
+  caption,
+  accessToken,
+}: SendDocumentInput) {
+  const document: Record<string, unknown> = {
+    ...(mediaId ? { id: mediaId } : {}),
+    ...(link ? { link } : {}),
+  };
+  if (filename) document.filename = filename;
+  if (caption) document.caption = caption;
+
+  const json = await metaFetch(
+    `/${phoneNumberId}/messages`,
+    {
+      method: "POST",
+      body: {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "document",
+        document,
+      },
+    },
+    accessToken,
+  );
+  return json as { messaging_product: string; contacts: unknown[]; messages: { id: string }[] };
+}
+
+export interface UploadMediaInput {
+  phoneNumberId: string;
+  buffer: Uint8Array;
+  mimeType: string;
+  filename?: string;
+  caption?: string;
+  /** Per-account token; falls back to WHATSAPP_API_KEY. */
+  accessToken?: string;
+}
+
+/**
+ * Upload a file to Meta's media store (POST /{PHONE_NUMBER_ID}/media) so it
+ * can be sent later as a document/media message via its `id`.
+ */
+export async function uploadMedia({ phoneNumberId, buffer, mimeType, filename, caption, accessToken }: UploadMediaInput) {
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  const ab = new ArrayBuffer(buffer.byteLength);
+  new Uint8Array(ab).set(buffer);
+  form.append("file", new Blob([ab], { type: mimeType }), filename ?? "file");
+  if (caption) form.append("caption", caption);
+
+  const res = await fetch(`${BASE_URL}/${phoneNumberId}/media`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken ?? process.env.WHATSAPP_API_KEY}`,
+    },
+    body: form,
+  });
+
+  const text = await res.text();
+  const json = text ? safeJson(text) : null;
+  if (!res.ok) {
+    const err = (json as { error?: { code?: number; message?: string } } | null)?.error;
+    throw new MetaApiError(
+      res.status,
+      err?.code,
+      err?.message ?? `Meta media upload ${res.status}: ${text}`,
+      json,
+    );
+  }
+  return json as { id: string };
+}
+
 // ---------------------------------------------------------------------------
 // Message templates (GET/POST/DELETE /{WABA_ID}/message_templates)
 // ---------------------------------------------------------------------------

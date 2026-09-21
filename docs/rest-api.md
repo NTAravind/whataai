@@ -303,6 +303,94 @@ Get/update/delete a resource. PATCH accepts `{ "name"?, "type"?,
 referencing `availability_exceptions`, `availability_rules`, and `bookings`
 rows (deepest-first, the platform has no cascading FKs).
 
+Granularity: `oauth_states`, `conversations`, `contacts`, `automations`,
+`integrations` rows are cleaned up automatically.
+
+## Custom automations
+
+Automations run a pipeline of steps when an event fires in a conversation.
+Triggers: `after_agent_reply` (agent replied), `on_tool_call` (agent used a
+specific tool), `ai_capture` (AI extracted structured fields),
+`manual` (fired on demand from a conversation).
+
+### GET|POST /api/tenants/[tenantId]/automations
+
+List automations, or create one.
+
+Create body:
+`{ "name", "agentId"? (null = all agents), "isActive"?, "triggerType",
+"triggerConfig", "steps" }`.
+
+- `triggerConfig` depends on the trigger: `{ "tool_name": string }` for
+  `on_tool_call`, `{ "fields": CaptureField[] }` for `ai_capture`, `{}` for
+  the others.
+- `CaptureField`: `{ "name", "type": "string"|"number", "description",
+  "required"?, "saveToContact"? }`.
+- `steps` is a non-empty array of discriminated step objects:
+  - `{ "type": "api_call", "integrationId"|"url", "method", "headers"?,
+    "body"?, "responseType"? }` (same as `send_document` for url)
+  - `{ "type": "send_message", "text" }`
+  - `{ "type": "send_template", "templateId" }`
+  - `{ "type": "send_document", "mediaId"|"url", "filename"? }`
+  - `{ "type": "tag_contact", "tag" }`
+  - `{ "type": "wait", "seconds" }` (1–3600)
+
+### GET|PATCH|DELETE /api/tenants/[tenantId]/automations/[automationId]
+
+Get / update / delete one. PATCH accepts any of the create fields (+
+`isActive`); updating `name`, `trigger_config`, or `steps` revalidates them.
+Delete removes run history too.
+
+### POST /api/tenants/[tenantId]/automations/[automationId]/duplicate
+
+Copies the automation (name suffixed `(copy)`), no run history.
+
+### GET /api/tenants/[tenantId]/automations/[automationId]/runs
+
+Run history: `{ "runs": [{ "id", "status", "step_results", "error",
+"started_at", "finished_at", "durationMs", "contact"? }] }`. `step_results`
+is `[{ "index", "type", "status", "output", "error" }]`.
+
+### GET /api/tenants/[tenantId]/automations/enabled-tools
+
+Builder data source: `{ "tools": [{ name, description }], "agents":
+[{ id, name, enabledTools }], "captureAutomations": [{ id, name, agentId,
+toolName, fields }] }`. `captureAutomations` lists currently active
+`ai_capture` automations, whose tool names (`capture_<id>`) the agent can
+invoke as AI capture tools.
+
+## Integrations
+
+External services an automation's `api_call` steps can hit. Non-OAuth
+credentials are never auto-injected into headers — expose them explicitly as
+`"{{integration.credential}}"` in a step's headers/url/body.
+
+### GET|POST /api/tenants/[tenantId]/integrations
+
+List (`{ "integrations": [...] }`, with `hasCredentials`), or create one.
+Create body: `{ "name", "type", "baseUrl"?, "credential"?
+(stored encrypted) }`. `type` is `generic` or any configured OAuth provider
+id (`zoho_invoice`, `quickbooks`). OAuth types persist via the callback below
+rather than a raw credential.
+
+### GET|PATCH|DELETE /api/tenants/[tenantId]/integrations/[integrationId]
+
+Get / update / delete one. PATCH accepts `{ "name"?, "baseUrl"?,
+"credential"? }`. Deleting an integration breaks `api_call` steps that
+reference it.
+
+### GET /api/tenants/[tenantId]/integrations/oauth/status
+
+`{ "providers": [{ "id", "scopes", "clientId", "configured" }] }`.
+`configured` reflects whether the operator set the provider's env secrets.
+
+### GET /api/tenants/[tenantId]/integrations/oauth/start?provider=&integrationName=
+
+Starts an OAuth handshake. Returns `{ "authorizeUrl" }`; point the browser
+there. The callback is `GET /api/auth/oauth/callback` which exchanges the
+code, stores the tokens, and redirects to
+`/dashboard/oauth-result?from=integration&success=1|0&name=`.
+
 ---
 
 ## Error responses
@@ -334,3 +422,6 @@ All endpoints return `{ "error": "…" }`. Common statuses:
 | `RESEND_API_KEY` | Mail adapter |
 | `AI_MODEL` | Default agent model |
 | `INNGEST_DEV` | Inngest dev-mode routing |
+| `CREDENTIALS_ENCRYPTION_KEY` | Hex secret used to encrypt integration credentials at rest (required for stored credentials) |
+| `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET` | Zoho Invoice OAuth app |
+| `QUICKBOOKS_CLIENT_ID`, `QUICKBOOKS_CLIENT_SECRET` | QuickBooks OAuth app |

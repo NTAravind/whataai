@@ -65,3 +65,29 @@ export async function setOptOut(tenantId: string, phoneNumber: string, optOut: b
     .eq("tenant_id", tenantId)
     .eq("phone_number", phoneNumber);
 }
+
+/** Merge keys into a contact's metadata (used by ai_capture saveToContact). */
+export async function updateContactMetadata(
+  tenantId: string,
+  contactId: string,
+  patch: Record<string, unknown>,
+): Promise<Contact> {
+  const { data: existing, error: readError } = await supabaseAdmin()
+    .from("contacts")
+    .select("metadata")
+    .eq("id", contactId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  if (readError) throw readError;
+
+  const metadata = ((existing?.metadata ?? {}) as Record<string, unknown>) ?? {};
+  const { data, error } = await supabaseAdmin()
+    .from("contacts")
+    .update({ metadata: { ...metadata, ...patch } })
+    .eq("id", contactId)
+    .eq("tenant_id", tenantId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Contact;
+}

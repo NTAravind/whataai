@@ -9,7 +9,7 @@ import { z } from "zod";
  */
 
 export const contentSchema = z.object({
-  type: z.enum(["text", "template", "flow", "tool_call", "tool_result"]),
+  type: z.enum(["text", "template", "flow", "document", "tool_call", "tool_result"]),
   text: z.string().optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
 });
@@ -143,5 +143,19 @@ export const bookingReminderDue = eventType("booking/reminder.due", {
   schema: z.object({
     bookingId: z.string().uuid(),
     tenantId: z.string().uuid(),
+  }),
+});
+
+// ---------------------------------------------------------------------------
+// Automations
+// ---------------------------------------------------------------------------
+
+export const automationTriggered = eventType("automation/triggered", {
+  schema: z.object({
+    automationId: z.string().uuid(),
+    tenantId: z.string().uuid(),
+    conversationId: z.string().uuid().optional(),
+    contactId: z.string().uuid().optional(),
+    variables: z.record(z.string(), z.unknown()),
   }),
 });

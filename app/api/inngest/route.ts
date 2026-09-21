@@ -10,6 +10,7 @@ import { flowDataExchangeHandler } from "@/lib/inngest/functions/flow-data-excha
 import { kbDocumentChunker } from "@/lib/inngest/functions/kb-chunk";
 import { bookingReminder } from "@/lib/inngest/functions/booking-reminder";
 import { bulkSendTemplate } from "@/lib/inngest/functions/bulk-send-template";
+import { automationRun } from "@/lib/inngest/functions/automation-run";
 
 export const maxDuration = 60;
 
@@ -26,5 +27,6 @@ export const { GET, POST, PUT } = serve({
     kbDocumentChunker,
     bookingReminder,
     bulkSendTemplate,
+    automationRun,
   ],
 });

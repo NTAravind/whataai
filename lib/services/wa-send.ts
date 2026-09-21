@@ -157,6 +157,50 @@ export async function sendWhatsAppTemplate(input: SendWhatsAppTemplateInput) {
   return { messageId: message.id, conversationId, status: "queued" };
 }
 
+export interface SendWhatsAppDocumentInput extends WaAccountRef {
+  to: string;
+  document: {
+    mediaId?: string;
+    link?: string;
+    filename?: string;
+    caption?: string;
+  };
+  conversationId?: string;
+}
+
+export async function sendWhatsAppDocument(input: SendWhatsAppDocumentInput) {
+  if (!input.to) throw new HttpError(400, "to is required");
+  if (!input.document.mediaId && !input.document.link) {
+    throw new HttpError(400, "document mediaId or link is required");
+  }
+
+  const wa = await resolveWaAccount(input);
+  const tenantId = input.tenantId ?? wa.tenant_id;
+
+  const contact = await getOrCreateContact(tenantId, input.to, null);
+  if (contact.opt_out) throw new HttpError(403, "Contact has opted out");
+
+  const conversationId = await resolveConversation({
+    tenantId,
+    contactId: contact.id,
+    channelAccountId: wa.id,
+    senderId: input.to,
+    conversationId: input.conversationId,
+  });
+
+  const message = await enqueueOutboundMessage({
+    tenantId,
+    channel: "whatsapp",
+    channelAccountId: wa.id,
+    conversationId,
+    contactId: contact.id,
+    senderId: input.to,
+    content: { type: "document", meta: input.document },
+  });
+
+  return { messageId: message.id, conversationId, status: "queued" };
+}
+
 /** Utility/service message — a UTILITY-category template (session-window expired, etc.). */
 export async function sendUtilityMessage(input: SendWhatsAppTemplateInput) {
   if (!input.templateId) throw new HttpError(400, "templateId is required for a service message");

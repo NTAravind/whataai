@@ -5,10 +5,12 @@ import type {
   SendResult,
   TemplateRef,
   FlowRef,
+  DocumentRef,
 } from "./channel.interface";
 import {
   sendTextMessage,
   sendTemplateMessage,
+  sendDocumentMessage,
   triggerFlow as metaTriggerFlow,
 } from "@/lib/meta/whatsapp";
 
@@ -58,6 +60,24 @@ export const whatsappAdapter: ChannelAdapter = {
         flowId: flow.flowId,
         ctaText: flow.ctaText,
         data: flow.data,
+        accessToken,
+      });
+      return { providerMessageId: messages[0]?.id, status: "queued" };
+    } catch (err) {
+      return { status: "failed", error: err instanceof Error ? err.message : String(err) };
+    }
+  },
+
+  async sendDocument(ctx, to, document: DocumentRef): Promise<SendResult> {
+    try {
+      const { phoneNumberId, accessToken } = await resolvePhone(ctx);
+      const { messages } = await sendDocumentMessage({
+        phoneNumberId,
+        to,
+        mediaId: document.mediaId,
+        link: document.link,
+        filename: document.filename,
+        caption: document.caption,
         accessToken,
       });
       return { providerMessageId: messages[0]?.id, status: "queued" };

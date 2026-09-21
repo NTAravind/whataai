@@ -9,7 +9,7 @@ export interface OutboundInput {
   conversationId?: string;
   contactId: string;
   senderId: string;
-  content: { type: "text" | "template" | "flow"; text?: string; meta?: Record<string, unknown> };
+  content: { type: "text" | "template" | "flow" | "document"; text?: string; meta?: Record<string, unknown> };
   templateId?: string;
   agentId?: string | null;
 }

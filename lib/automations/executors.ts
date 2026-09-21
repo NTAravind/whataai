@@ -5,7 +5,7 @@ import { getIntegrationWithCredentials } from "@/lib/services/integrations";
 import { isOAuthProviderType } from "@/lib/integrations/oauth-providers";
 import { getValidAccessToken } from "@/lib/integrations/token-refresh";
 import { uploadMedia } from "@/lib/meta/whatsapp";
-import { supabaseAdmin } from "@/lib/clients/supabase";
+import { supabaseAdmin, unwrap } from "@/lib/clients/supabase";
 import { resolveTarget } from "@/lib/automations/url-guard";
 
 /** Response size caps — stream and abort past the cap. */
@@ -290,22 +290,15 @@ async function sendDocumentExecutor(step: Extract<AutomationStep, { type: "send_
 
 async function tagContactExecutor(step: Extract<AutomationStep, { type: "tag_contact" }>, ctx: ExecContext) {
   if (!ctx.contact) throw new HttpError(400, "no contact on this run — cannot tag");
-  const admin = supabaseAdmin();
-  const { data: row } = await admin
-    .from("contacts")
-    .select("metadata")
-    .eq("id", ctx.contact.id)
-    .eq("tenant_id", ctx.tenantId)
-    .maybeSingle();
-  const metadata = ((row?.metadata ?? {}) as { tags?: string[] }) ?? {};
-  const tags = Array.isArray(metadata.tags) ? [...metadata.tags] : [];
-  if (!tags.includes(step.tag)) tags.push(step.tag);
-  const { error } = await admin
-    .from("contacts")
-    .update({ metadata: { ...metadata, tags } })
-    .eq("id", ctx.contact.id)
-    .eq("tenant_id", ctx.tenantId);
-  if (error) throw error;
+  // Atomic append-if-absent via the DB function — never read-modify-write the
+  // whole metadata column from here (concurrent steps would lose tags).
+  const tags = unwrap(
+    await supabaseAdmin().rpc("add_contact_tag", {
+      p_tenant: ctx.tenantId,
+      p_contact: ctx.contact.id,
+      p_tag: step.tag,
+    }),
+  );
   return { tag: step.tag, tags };
 }
 

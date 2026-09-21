@@ -1,6 +1,6 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { AgentState } from "./state";
-import { createAgentNode, createToolNode, buildSystemPrompt } from "./nodes";
+import { createAgentNode, createAutomationToolNode, buildSystemPrompt } from "./nodes";
 import { buildLangChainTools } from "./tools";
 import { nextAfterTools, shouldContinue } from "./edges";
 import type { AgentToolCtx } from "@/lib/agents/registry";
@@ -13,6 +13,7 @@ export interface BuildGraphInput {
     tools: string[];
   };
   ctx: AgentToolCtx;
+  agentId?: string | null;
 }
 
 export async function buildAgentGraph(input: BuildGraphInput) {
@@ -21,7 +22,7 @@ export async function buildAgentGraph(input: BuildGraphInput) {
     process.env.AI_MODEL ??
     DEFAULT_MODEL;
 
-  const lcTools = buildLangChainTools(input.agent.tools, input.ctx);
+  const lcTools = await buildLangChainTools(input.agent.tools, input.ctx, input.agentId);
   const systemPrompt = await buildSystemPrompt(
     input.agent.instructions,
     input.ctx.tenantId,
@@ -29,7 +30,7 @@ export async function buildAgentGraph(input: BuildGraphInput) {
   );
 
   const agentNode = createAgentNode(modelName, systemPrompt, lcTools);
-  const toolNode = createToolNode(lcTools);
+  const toolNode = createAutomationToolNode(lcTools, input.agentId ?? "");
   const finalAgentNode = createAgentNode(
     modelName,
     `${systemPrompt}\n\nYou have completed the available tool actions. Give the customer a concise final response based on the conversation and tool results. Do not call any tools.`,

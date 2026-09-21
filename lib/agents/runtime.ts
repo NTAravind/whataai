@@ -149,6 +149,7 @@ export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunRes
             tools: input.agent.tools,
           },
           ctx: input.ctx,
+          agentId: input.agent.id,
         });
 
     const result = await graph.invoke(

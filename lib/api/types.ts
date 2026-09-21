@@ -162,3 +162,78 @@ export interface MemberRow {
   role: string;
   created_at: string;
 }
+
+export type AutomationTriggerType = "after_agent_reply" | "on_tool_call" | "ai_capture" | "manual";
+
+export interface AutomationStep {
+  type: "api_call" | "send_message" | "send_template" | "send_document" | "tag_contact" | "wait";
+  integrationId?: string;
+  url?: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH";
+  headers?: Record<string, string>;
+  body?: string;
+  responseType?: "json" | "binary";
+  text?: string;
+  templateId?: string;
+  mediaId?: string;
+  filename?: string;
+  tag?: string;
+  seconds?: number;
+}
+
+export interface CaptureField {
+  name: string;
+  type: "string" | "number";
+  description: string;
+  required: boolean;
+  saveToContact: boolean;
+}
+
+export interface AutomationRow {
+  id: string;
+  tenant_id: string;
+  agent_id: string | null;
+  name: string;
+  is_active: boolean;
+  trigger_type: AutomationTriggerType;
+  trigger_config: Record<string, unknown>;
+  steps: AutomationStep[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutomationRunRow {
+  id: string;
+  automation_id: string;
+  status: "running" | "completed" | "failed";
+  steps_count: number;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+  durationMs: number | null;
+  contact?: { full_name: string | null; phone_number: string | null };
+}
+
+export interface IntegrationRow {
+  id: string;
+  tenant_id: string;
+  name: string;
+  type: string;
+  base_url: string | null;
+  config: Record<string, unknown>;
+  hasCredentials: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnabledToolsPayload {
+  tools: Array<{ name: string; description: string }>;
+  agents: Array<{ id: string; name: string; enabledTools: string[] }>;
+  captureAutomations: Array<{
+    id: string;
+    name: string;
+    agentId: string | null;
+    toolName: string;
+    fields: CaptureField[];
+  }>;
+}

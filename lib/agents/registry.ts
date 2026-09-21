@@ -9,6 +9,7 @@ import { createTemplate } from "@/lib/services/templates";
 import { setConversationStatus } from "@/lib/services/conversations";
 import { enqueueOutboundMessage } from "@/lib/services/messages";
 import { rejectPastDate } from "./date-validation";
+import { buildCaptureTools } from "@/lib/automations/capture-tool";
 
 /**
  * Tool registry (docs/guide.md §5). Each tool is defined once with a Zod
@@ -542,7 +543,12 @@ function groupBy<T>(arr: T[], key: (t: T) => string): Record<string, T[]> {
 }
 
 /** Build the AI SDK ToolSet for an agent, honoring its enabled tools. */
-export function buildAgentTools(enabledTools: string[], ctx: AgentToolCtx): ToolSet {  const result: ToolSet = {};
+export async function buildAgentTools(
+  enabledTools: string[],
+  ctx: AgentToolCtx,
+  agentId?: string | null,
+): Promise<ToolSet> {
+  const result: ToolSet = {};
   for (const [name, def] of Object.entries(tools)) {
     if (!enabledTools.includes(name)) continue;
     result[name] = {
@@ -551,5 +557,15 @@ export function buildAgentTools(enabledTools: string[], ctx: AgentToolCtx): Tool
       execute: async (args: unknown) => def.execute(ctx, args),
     } as ToolSet[string];
   }
+
+  const captureTools = await buildCaptureTools(ctx.tenantId, agentId);
+  for (const def of captureTools) {
+    result[def.name] = {
+      description: def.description,
+      inputSchema: def.parameters as FlexibleSchema<unknown>,
+      execute: async (args: unknown) => def.execute(ctx, args),
+    } as ToolSet[string];
+  }
+
   return result;
 }
