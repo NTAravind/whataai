@@ -5,7 +5,7 @@ import { createAgentNode, createAutomationToolNode, buildSystemPrompt } from "./
 import { buildLangChainTools } from "./tools";
 import { nextAfterTools, shouldContinue } from "./edges";
 import type { AgentToolCtx } from "@/lib/agents/registry";
-import { DEFAULT_MODEL, getLangChainModel } from "../provider";
+import { getLangChainModel, resolveModelId } from "../provider";
 
 const SupervisorState = Annotation.Root({
   ...AgentState.spec,
@@ -15,31 +15,27 @@ const SupervisorState = Annotation.Root({
   }),
 });
 
-const ROUTE_MAP: Record<string, { tools: string[]; prompt: string; model?: string }> = {
+const ROUTE_MAP: Record<string, { tools: string[]; prompt: string }> = {
   faq: {
     tools: ["search_knowledge_base", "get_current_datetime", "escalate_to_human"],
     prompt: `You are a FAQ specialist. Answer customer questions using the knowledge base.
 Search the KB first. If you can't find the answer, escalate to a human.
 Never invent business facts.`,
-    model: DEFAULT_MODEL,
   },
   booking: {
     tools: ["check_availability", "create_booking", "cancel_booking", "list_resources", "schedule_reminder", "get_current_datetime", "escalate_to_human"],
     prompt: `You are a booking specialist. Help customers book, reschedule, or cancel appointments.
 Always check availability before suggesting times. After creating a booking, schedule a reminder.`,
-    model: DEFAULT_MODEL,
   },
   template: {
     tools: ["list_templates", "send_template", "list_flows", "trigger_flow", "escalate_to_human"],
     prompt: `You are a WhatsApp template specialist. Help customers interact with templates and flows.
 Use list_templates to see what's available before sending.`,
-    model: DEFAULT_MODEL,
   },
   escalation: {
     tools: ["escalate_to_human"],
     prompt: `You are an escalation specialist. The customer needs to talk to a human.
 Use escalate_to_human immediately with a clear reason.`,
-    model: DEFAULT_MODEL,
   },
 };
 
@@ -78,7 +74,8 @@ export async function buildSupervisorGraph(input: {
   enabledTools: string[];
   ctx: AgentToolCtx;
 }) {
-  const supervisorNode = createSupervisorNode(DEFAULT_MODEL);
+  const modelName = await resolveModelId(input.model_config?.model ?? process.env.AI_MODEL);
+  const supervisorNode = createSupervisorNode(modelName);
 
   const subAgentNodes: Record<string, ReturnType<typeof createAgentNode>> = {};
   const subAgentToolNodes: Record<string, ReturnType<typeof createAutomationToolNode>> = {};
@@ -94,13 +91,13 @@ export async function buildSupervisorGraph(input: {
     );
 
     subAgentNodes[category] = createAgentNode(
-      config.model ?? DEFAULT_MODEL,
+      modelName,
       systemPrompt,
       lcTools,
     );
     subAgentToolNodes[category] = createAutomationToolNode(lcTools, input.agentId);
     finalAgentNodes[category] = createAgentNode(
-      config.model ?? DEFAULT_MODEL,
+      modelName,
       `${systemPrompt}\n\nYou have completed the available tool actions. Give the customer a concise final response based on the conversation and tool results. Do not call any tools.`,
       [],
     );

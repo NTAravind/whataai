@@ -2,7 +2,7 @@ import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { buildAgentGraph } from "./graph/graph";
 import { buildSupervisorGraph } from "./graph/supervisor";
 import { calculateCost } from "./pricing";
-import { DEFAULT_MODEL } from "./provider";
+import { resolveModelId } from "./provider";
 import type { ModelMessage } from "ai";
 import type { AgentToolCtx } from "./registry";
 
@@ -27,6 +27,7 @@ export interface AgentRunInput {
 }
 
 export interface AgentRunResult {
+  model: string;
   text: string;
   iterations: number;
   endedWithToolCall: boolean;
@@ -123,10 +124,7 @@ function toLangChainMessages(history: ModelMessage[]) {
 }
 
 export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunResult> {
-  const modelName =
-    (input.agent.model_config?.model as string | undefined) ??
-    process.env.AI_MODEL ??
-    DEFAULT_MODEL;
+  const modelName = await resolveModelId(input.agent.model_config?.model ?? process.env.AI_MODEL);
 
   // Webhook ingestion persists the inbound message before this function runs.
   // Passing history as-is ensures the newest user message reaches the model
@@ -227,6 +225,7 @@ export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunRes
   const cost = calculateCost(modelName, usage.inputTokens, usage.outputTokens);
 
   return {
+    model: modelName,
     text,
     iterations,
     endedWithToolCall: Boolean(lastMessage?.tool_calls?.length ?? lastMessage?.kwargs?.tool_calls?.length),

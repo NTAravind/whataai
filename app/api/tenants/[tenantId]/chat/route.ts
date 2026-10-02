@@ -3,6 +3,7 @@ import { requireTenantAccess } from "@/lib/auth/guard";
 import { ModelMessage, UIMessage, convertToModelMessages } from "ai";
 import { createAgentUIStreamResponse } from "ai";
 import { buildTenantAgent } from "@/lib/agents/tenant-runtime";
+import { resolveModelId } from "@/lib/agents/provider";
 import {
   createChatSession,
   getChatHistory,
@@ -73,11 +74,15 @@ export async function POST(
   console.log(`[chat] New messages to persist: ${newMessages.length}`);
   await appendChatMessages(sessionId, newMessages as { role: string; content: unknown }[]);
 
-  console.log(`[chat] Building tenant agent`);
-  const agent = await buildTenantAgent({
-    tenantId,
-    model: typeof model === "string" ? model : undefined,
-  });
+  let selectedModel: string;
+  try {
+    selectedModel = await resolveModelId(model);
+  } catch (err) {
+    return new Response(err instanceof Error ? err.message : "Invalid model", { status: 400 });
+  }
+
+  console.log(`[chat] Building tenant agent with model=${selectedModel}`);
+  const agent = await buildTenantAgent({ tenantId, model: selectedModel });
 
   try {
     console.log(`[chat] Creating agent UI stream response for session ${sessionId}`);

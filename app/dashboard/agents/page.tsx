@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -34,8 +34,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MODELS, DEFAULT_MODEL } from "@/lib/agents/provider";
 import type { AgentRow } from "@/lib/api/types";
+
+type ModelOption = { id: string; label: string; group: string };
 
 export default function AgentsPage() {
   const { tenantId } = useTenant();
@@ -43,12 +44,19 @@ export default function AgentsPage() {
   const { data, loading, error, reload } = useApi<{ agents: AgentRow[] }>(
     tenantId ? `/api/tenants/${tenantId}/agents` : null,
   );
+  const { data: modelData } = useApi<{ models: ModelOption[]; defaultModel: string }>(
+    tenantId ? `/api/tenants/${tenantId}/models` : null,
+  );
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [type, setType] = useState("receptionist");
-  const [model, setModel] = useState(DEFAULT_MODEL);
+  const [model, setModel] = useState("");
   const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    if (!model && modelData?.defaultModel) setModel(modelData.defaultModel);
+  }, [model, modelData?.defaultModel]);
 
   async function create() {
     if (!tenantId) return;
@@ -125,15 +133,15 @@ export default function AgentsPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="agent-model">Model</Label>
-                <Select value={model} onValueChange={setModel}>
+                <Select value={model} onValueChange={setModel} disabled={!modelData?.models.length}>
                   <SelectTrigger id="agent-model" className="w-full">
                     <SelectValue placeholder="Select a model" />
                   </SelectTrigger>
                   <SelectContent>
-                    {Array.from(new Set(MODELS.map((m) => m.group))).map((group) => (
+                    {Array.from(new Set((modelData?.models ?? []).map((m) => m.group))).map((group) => (
                       <SelectGroup key={group}>
                         <SelectLabel>{group}</SelectLabel>
-                        {MODELS.filter((m) => m.group === group).map((m) => (
+                        {(modelData?.models ?? []).filter((m) => m.group === group).map((m) => (
                           <SelectItem key={m.id} value={m.id}>
                             {m.label}
                           </SelectItem>
@@ -149,7 +157,7 @@ export default function AgentsPage() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={create} disabled={creating || !name.trim()}>
+              <Button onClick={create} disabled={creating || !name.trim() || !model}>
                 {creating ? "Creating…" : "Create"}
               </Button>
             </DialogFooter>

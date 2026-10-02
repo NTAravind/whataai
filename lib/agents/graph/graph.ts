@@ -4,7 +4,7 @@ import { createAgentNode, createAutomationToolNode, buildSystemPrompt } from "./
 import { buildLangChainTools } from "./tools";
 import { nextAfterTools, shouldContinue } from "./edges";
 import type { AgentToolCtx } from "@/lib/agents/registry";
-import { DEFAULT_MODEL } from "../provider";
+import { resolveModelId } from "../provider";
 
 export interface BuildGraphInput {
   agent: {
@@ -17,10 +17,7 @@ export interface BuildGraphInput {
 }
 
 export async function buildAgentGraph(input: BuildGraphInput) {
-  const modelName =
-    (input.agent.model_config?.model as string | undefined) ??
-    process.env.AI_MODEL ??
-    DEFAULT_MODEL;
+  const modelName = await resolveModelId(input.agent.model_config?.model ?? process.env.AI_MODEL);
 
   const lcTools = await buildLangChainTools(input.agent.tools, input.ctx, input.agentId);
   const systemPrompt = await buildSystemPrompt(

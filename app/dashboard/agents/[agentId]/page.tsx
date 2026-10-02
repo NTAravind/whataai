@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -38,8 +38,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MODELS, DEFAULT_MODEL } from "@/lib/agents/provider";
 import type { AgentRow } from "@/lib/api/types";
+
+type ModelOption = { id: string; label: string; group: string };
 
 const TOOL_LABELS: Record<string, string> = {
   search_knowledge_base: "Search knowledge base",
@@ -68,11 +69,14 @@ export default function AgentEditorPage() {
   const { data, loading, error, reload } = useApi<{ agent: AgentRow }>(
     tenantId && agentId ? `/api/tenants/${tenantId}/agents/${agentId}` : null,
   );
+  const { data: modelData } = useApi<{ models: ModelOption[]; defaultModel: string }>(
+    tenantId ? `/api/tenants/${tenantId}/models` : null,
+  );
 
   const [name, setName] = useState("");
   const [type, setType] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [model, setModel] = useState(DEFAULT_MODEL);
+  const [model, setModel] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [tools, setTools] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -84,11 +88,15 @@ export default function AgentEditorPage() {
     setName(data.agent.name);
     setType(data.agent.type);
     setInstructions(data.agent.instructions ?? "");
-    setModel((data.agent.model_config?.model as string | undefined) ?? DEFAULT_MODEL);
+    setModel((data.agent.model_config?.model as string | undefined) ?? modelData?.defaultModel ?? "");
     setEnabled(data.agent.enabled);
     setTools(data.agent.tools ?? []);
     setDirty(false);
   }
+
+  useEffect(() => {
+    if (!model && modelData?.defaultModel) setModel(modelData.defaultModel);
+  }, [model, modelData?.defaultModel]);
 
   if (loading) return <LoadingState rows={6} />;
   if (error) return <ErrorState message={error} onRetry={reload} />;
@@ -170,15 +178,15 @@ export default function AgentEditorPage() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="model">Model</Label>
-            <Select value={model} onValueChange={(v) => { setModel(v); setDirty(true); }}>
+            <Select value={model} onValueChange={(v) => { setModel(v); setDirty(true); }} disabled={!modelData?.models.length}>
               <SelectTrigger id="model" className="w-full">
                 <SelectValue placeholder="Select a model" />
               </SelectTrigger>
               <SelectContent>
-                {Array.from(new Set(MODELS.map((m) => m.group))).map((group) => (
+                {Array.from(new Set((modelData?.models ?? []).map((m) => m.group))).map((group) => (
                   <SelectGroup key={group}>
                     <SelectLabel>{group}</SelectLabel>
-                    {MODELS.filter((m) => m.group === group).map((m) => (
+                    {(modelData?.models ?? []).filter((m) => m.group === group).map((m) => (
                       <SelectItem key={m.id} value={m.id}>
                         {m.label}
                       </SelectItem>

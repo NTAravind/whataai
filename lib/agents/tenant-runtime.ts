@@ -1,7 +1,7 @@
 import { ToolLoopAgent } from "ai";
 import { buildTenantAgentTools } from "./tenant-tools";
 import { getBusinessContextPrompt } from "@/lib/services/businesses";
-import { DEFAULT_MODEL, getAISDKModel } from "./provider";
+import { getAISDKModel, resolveModelId } from "./provider";
 
 export interface TenantAgentOptions {
   tenantId: string;
@@ -12,7 +12,7 @@ export async function buildTenantAgent({
   tenantId,
   model,
 }: TenantAgentOptions) {
-  const chosenModel = model ?? DEFAULT_MODEL;
+  const chosenModel = await resolveModelId(model);
   console.log(`[tenant-runtime] Building agent for tenant ${tenantId}, model=${chosenModel}`);
 
   const tools = buildTenantAgentTools(tenantId);

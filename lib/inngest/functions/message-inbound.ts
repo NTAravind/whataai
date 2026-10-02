@@ -88,27 +88,63 @@ export const messageInboundFunction = inngest.createFunction(
       return { skipped: true, reason: "no_agent" };
     }
 
-    const result = await runDurableAgent({
-      agent: {
-        id: agent.id,
-        type: agent.type,
-        name: agent.name,
-        instructions: agent.instructions,
-        model_config: agent.model_config,
-        tools: agent.tools,
-      },
-      ctx: {
-        tenantId: d.tenantId,
+    let result: Awaited<ReturnType<typeof runDurableAgent>>;
+    try {
+      result = await runDurableAgent({
+        agent: {
+          id: agent.id,
+          type: agent.type,
+          name: agent.name,
+          instructions: agent.instructions,
+          model_config: agent.model_config,
+          tools: agent.tools,
+        },
+        ctx: {
+          tenantId: d.tenantId,
+          conversationId: d.conversationId,
+          contactId: d.contactId,
+          customerName: ctx.conversationContext.contact.full_name,
+        },
+        history: ctx.history as Awaited<ReturnType<typeof historyFromDb>>,
+        step,
+        logger: {
+          warn: (message, data) => logger.warn(message, data),
+        },
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      logger.error("agent runtime failed; sending fallback reply", {
         conversationId: d.conversationId,
-        contactId: d.contactId,
-        customerName: ctx.conversationContext.contact.full_name,
-      },
-      history: ctx.history as Awaited<ReturnType<typeof historyFromDb>>,
-      step,
-      logger: {
-        warn: (message, data) => logger.warn(message, data),
-      },
-    });
+        agentId: agent.id,
+        error: detail,
+      });
+
+      const fallbackMessage = await step.run("enqueue-agent-error-fallback", async () => {
+        const message = await enqueueOutboundMessage({
+          tenantId: d.tenantId,
+          channel: d.channel,
+          channelAccountId: d.channelAccountId,
+          conversationId: d.conversationId,
+          contactId: d.contactId,
+          senderId: d.senderId,
+          content: {
+            type: "text",
+            text: "Thanks for your message. We're having trouble generating a reply right now, but our team has your message.",
+            meta: { fallbackReason: "agent_runtime_failed", detail },
+          },
+          agentId: agent.id,
+        });
+
+        await supabaseAdmin()
+          .from("messages")
+          .update({ error: { reason: "agent_runtime_failed", detail } })
+          .eq("id", message.id);
+
+        return message.id;
+      });
+
+      return { replyMessageId: fallbackMessage, fallback: "agent_runtime_failed" };
+    }
 
     const generatedText = result.text.trim();
     // When the agent produced no final text but ended on a tool call, surface
@@ -188,7 +224,7 @@ export const messageInboundFunction = inngest.createFunction(
           completion_tokens: completionTokens,
           total_tokens: totalTokens,
           cost_usd: cost,
-          model: agent.model_config?.model ?? null,
+          model: result.model,
         });
         if (eventErr) logger.warn("failed to insert usage event", { error: eventErr.message });
       }

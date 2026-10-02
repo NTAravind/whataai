@@ -1,4 +1,5 @@
 import { inngest } from "@/lib/clients/ingest";
+import { NonRetriableError } from "inngest";
 import { messageOutboundSend } from "@/lib/inngest/events";
 import { getAdapter } from "@/lib/channels/registry";
 import { supabaseAdmin } from "@/lib/clients/supabase";
@@ -112,6 +113,7 @@ export const outboundMessage = inngest.createFunction(
         updateMessageStatus(d.messageId!, {
           status: result.status,
           error: result.status === "failed" ? { detail: result.error } : undefined,
+          waMessageId: d.channel === "whatsapp" ? result.providerMessageId : undefined,
         }),
       );
     }
@@ -122,6 +124,13 @@ export const outboundMessage = inngest.createFunction(
           await updateMessageStatus(d.messageId, { status: "failed", error: { detail: result.error } });
         }
       });
+      // Authentication / credential errors are permanent — retrying won't help.
+      const isCredentialError =
+        result.error != null &&
+        /(auth|credential|token|permission|403|190)/i.test(result.error);
+      if (isCredentialError) {
+        throw new NonRetriableError(`send failed (credential): ${result.error}`);
+      }
       throw new Error(`send failed: ${result.error}`);
     }
 

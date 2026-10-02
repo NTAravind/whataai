@@ -1,5 +1,6 @@
 import { supabaseAdmin, unwrap } from "@/lib/clients/supabase";
 import { DEFAULT_AGENT_TOOLS } from "@/lib/agents/registry";
+import { resolveModelId } from "@/lib/agents/provider";
 
 export interface AgentRow {
   id: string;
@@ -35,6 +36,13 @@ export interface UpdateAgentInput {
   tools?: string[];
 }
 
+async function normalizeModelConfig(modelConfig?: Record<string, unknown>) {
+  return {
+    ...(modelConfig ?? {}),
+    model: await resolveModelId(modelConfig?.model),
+  };
+}
+
 /**
  * Agent CRUD. `createAgent` seeds the `agent_tools` rows automatically so a
  * new agent is usable immediately (docs/guide.md §5 — `agent_tools` toggles
@@ -50,7 +58,7 @@ export async function createAgent(input: CreateAgentInput): Promise<AgentWithToo
       type: input.type,
       name: input.name,
       instructions: input.instructions ?? "",
-      model_config: (input.model_config ?? {}) as unknown as Record<string, unknown>,
+      model_config: await normalizeModelConfig(input.model_config) as unknown as Record<string, unknown>,
     })
     .select()
     .single();
@@ -104,7 +112,7 @@ export async function updateAgent(tenantId: string, agentId: string, input: Upda
   if (input.type !== undefined) patch.type = input.type;
   if (input.name !== undefined) patch.name = input.name;
   if (input.instructions !== undefined) patch.instructions = input.instructions;
-  if (input.model_config !== undefined) patch.model_config = input.model_config;
+  if (input.model_config !== undefined) patch.model_config = await normalizeModelConfig(input.model_config);
   if (input.enabled !== undefined) patch.enabled = input.enabled;
   if (Object.keys(patch).length) {
     const { error } = await admin.from("agents").update(patch).eq("id", agentId).eq("tenant_id", tenantId);

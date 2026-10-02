@@ -168,6 +168,25 @@ export function AutomationBuilder({
     markDirty();
   }
 
+  /** Default shapes for each step type — ensures required fields are always present. */
+  const stepDefaults: Record<AutomationStep["type"], Partial<AutomationStep>> = {
+    send_message: { type: "send_message", text: "" },
+    send_template: { type: "send_template", templateId: "" },
+    send_document: { type: "send_document", url: "" },
+    api_call: { type: "api_call", method: "POST", url: "", body: "" },
+    tag_contact: { type: "tag_contact", tag: "" },
+    wait: { type: "wait", seconds: 5 },
+  };
+
+  function changeStepType(id: string, newType: AutomationStep["type"]) {
+    setSteps((prev) =>
+      prev.map((s) =>
+        s.id === id ? ({ id: s.id, ...stepDefaults[newType] } as DraftStep) : s,
+      ),
+    );
+    markDirty();
+  }
+
   function removeStep(id: string) {
     setSteps((prev) => prev.filter((s) => s.id !== id));
     markDirty();
@@ -511,9 +530,7 @@ export function AutomationBuilder({
                   <Icon className="size-4 text-muted-foreground" />
                   <Select
                     value={s.type}
-                    onValueChange={(v) =>
-                      updateStep(s.id, { type: v as AutomationStep["type"] } as Partial<AutomationStep>)
-                    }
+                    onValueChange={(v) => changeStepType(s.id, v as AutomationStep["type"])}
                   >
                     <SelectTrigger className="h-8 w-44">
                       <SelectValue />

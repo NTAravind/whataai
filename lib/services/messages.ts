@@ -89,10 +89,17 @@ export async function enqueueOutboundMessage(input: OutboundInput) {
   return message;
 }
 
-export async function updateMessageStatus(messageId: string, patch: { status: string; error?: Record<string, unknown> | null }) {
+export async function updateMessageStatus(
+  messageId: string,
+  patch: { status: string; error?: Record<string, unknown> | null; waMessageId?: string | null },
+) {
   return supabaseAdmin()
     .from("messages")
-    .update({ status: patch.status, error: patch.error ?? null })
+    .update({
+      status: patch.status,
+      error: patch.error ?? null,
+      ...(patch.waMessageId !== undefined ? { wa_message_id: patch.waMessageId } : {}),
+    })
     .eq("id", messageId);
 }
 

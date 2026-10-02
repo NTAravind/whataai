@@ -28,7 +28,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MODELS, DEFAULT_MODEL } from "@/lib/agents/provider";
+
+type ModelOption = { id: string; label: string; group: string };
 
 export function ChatClient() {
   const { tenant } = useTenant();
@@ -49,9 +50,23 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [input, setInput] = useState("");
-  const [model, setModel] = useState(DEFAULT_MODEL);
-  const modelRef = useRef(DEFAULT_MODEL);
+  const [model, setModel] = useState("");
+  const modelRef = useRef("");
   const [isHistoryOpen, setIsHistoryOpen] = useState(true);
+  const [modelData, setModelData] = useState<{ models: ModelOption[]; defaultModel: string } | null>(null);
+
+  useEffect(() => {
+    void fetch(`/api/tenants/${tenantId}/models`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Failed to load models")))
+      .then((data: { models: ModelOption[]; defaultModel: string }) => {
+        setModelData(data);
+        if (!modelRef.current) {
+          modelRef.current = data.defaultModel;
+          setModel(data.defaultModel);
+        }
+      })
+      .catch((error) => console.error("[chat-client] Failed to load models:", error));
+  }, [tenantId]);
 
   const loadSessions = useCallback(async () => {
     if (!tenantId) return;
@@ -351,6 +366,7 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
           <div className="ml-auto">
             <Select
               value={model}
+              disabled={!modelData?.models.length}
               onValueChange={(v) => {
                 modelRef.current = v;
                 setModel(v);
@@ -360,10 +376,10 @@ function ChatClientInner({ tenantId }: { tenantId: string }) {
                 <SelectValue placeholder="Model" />
               </SelectTrigger>
               <SelectContent>
-                {Array.from(new Set(MODELS.map((m) => m.group))).map((group) => (
+                {Array.from(new Set((modelData?.models ?? []).map((m) => m.group))).map((group) => (
                   <SelectGroup key={group}>
                     <SelectLabel>{group}</SelectLabel>
-                    {MODELS.filter((m) => m.group === group).map((m) => (
+                    {(modelData?.models ?? []).filter((m) => m.group === group).map((m) => (
                       <SelectItem key={m.id} value={m.id}>
                         {m.label}
                       </SelectItem>
