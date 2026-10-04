@@ -70,6 +70,19 @@ export function createAgentNode(
 
     const response = await llm.invoke(messages);
 
+    // ── Debug: agent reply ──────────────────────────────────────────────────
+    const responseToolCalls = (response as { tool_calls?: { name: string; args: unknown }[] }).tool_calls ?? [];
+    const responseContent = typeof response.content === "string"
+      ? response.content
+      : JSON.stringify(response.content);
+    console.log("[agent:reply]", {
+      model: modelName,
+      iteration: state.iteration + 1,
+      contentPreview: responseContent.slice(0, 200) || "(empty)",
+      toolCalls: responseToolCalls.map((tc) => ({ name: tc.name, args: tc.args })),
+    });
+    // ────────────────────────────────────────────────────────────────────────
+
     return {
       messages: [response],
       iteration: state.iteration + 1,

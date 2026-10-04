@@ -239,6 +239,7 @@ export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunRes
 
 export function historyFromDb(rows: { role: string; content: unknown }[]): ModelMessage[] {
   const out: ModelMessage[] = [];
+
   for (const row of rows) {
     const content = (row.content ?? {}) as { type?: string; text?: string; meta?: Record<string, unknown> };
     if (row.role === "user") {
@@ -247,5 +248,16 @@ export function historyFromDb(rows: { role: string; content: unknown }[]): Model
       out.push({ role: "assistant", content: content.text ?? "" });
     }
   }
-  return out.slice(-24);
+  const windowed = out.slice(-24);
+
+  // Gemini (and most hosted models) reject requests where the last message is
+  // from the assistant / model.  This can happen on Inngest retries when the
+  // assistant reply was already written to the DB before the step re-executes.
+  // Trim any trailing assistant messages so the history always ends on a user
+  // turn before we invoke the model.
+  while (windowed.length > 0 && windowed[windowed.length - 1].role === "assistant") {
+    windowed.pop();
+  }
+
+  return windowed;
 }
