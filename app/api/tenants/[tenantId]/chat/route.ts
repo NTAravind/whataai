@@ -3,7 +3,7 @@ import { requireTenantAccess } from "@/lib/auth/guard";
 import { ModelMessage, UIMessage, convertToModelMessages } from "ai";
 import { createAgentUIStreamResponse } from "ai";
 import { buildTenantAgent } from "@/lib/agents/tenant-runtime";
-import { resolveModelId } from "@/lib/agents/provider";
+import { resolveTenantModelId } from "@/lib/agents/model-access";
 import {
   createChatSession,
   getChatHistory,
@@ -76,7 +76,11 @@ export async function POST(
 
   let selectedModel: string;
   try {
-    selectedModel = await resolveModelId(model);
+    // Gate on what this tenant's plan grants, so a client can't bypass the
+    // dropdown and request a disabled model. Downgrades instead of failing.
+    const resolved = await resolveTenantModelId(tenantId, model);
+    selectedModel = resolved.model;
+    if (resolved.fellBack) console.warn(`[chat] ${resolved.reason}`);
   } catch (err) {
     return new Response(err instanceof Error ? err.message : "Invalid model", { status: 400 });
   }

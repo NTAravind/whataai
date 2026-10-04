@@ -18,7 +18,13 @@ export interface PlanLimits {
   allowed_agent_types?: string[];
   allowed_channels?: string[];
   token_budget_monthly?: number;
-  model_tier?: string;
+  /**
+   * Model ids this plan grants. Empty or absent means every enabled model.
+   * Only ids present in the models table (migration 021) can be granted.
+   */
+  allowed_models?: string[];
+  /** Model used when a tenant's saved selection is no longer granted. */
+  default_model?: string;
   enforcement?: "hard" | "soft";
 }
 
@@ -30,7 +36,8 @@ export const planLimitsSchema = z
     allowed_agent_types: z.array(z.string().min(1)).optional(),
     allowed_channels: z.array(z.string().min(1)).optional(),
     token_budget_monthly: z.number().int().min(0).optional(),
-    model_tier: z.string().min(1).optional(),
+    allowed_models: z.array(z.string().min(1)).optional(),
+    default_model: z.string().min(1).optional(),
     enforcement: z.enum(["hard", "soft"]).optional(),
   })
   .strip();

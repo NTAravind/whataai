@@ -96,8 +96,16 @@ export default function UsagePage() {
                   <span>{ent.data?.entitlements.allowedChannels.join(", ") ?? "—"}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Model tier</span>
-                  <span>{ent.data?.entitlements.model}</span>
+                  <span className="text-muted-foreground">Default model</span>
+                  <span>{ent.data?.entitlements.defaultModel ?? "—"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Available models</span>
+                  <span>
+                    {ent.data?.entitlements.allowedModels.length
+                      ? ent.data.entitlements.allowedModels.length
+                      : "all enabled"}
+                  </span>
                 </div>
               </CardContent>
             </Card>

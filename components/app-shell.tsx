@@ -13,6 +13,7 @@ import {
   CalendarDays,
   Clock,
   CreditCard,
+  Cpu,
   LayoutDashboard,
   MailPlus,
   MessagesSquare,
@@ -65,6 +66,7 @@ const adminNav = [
   { href: "/admin", label: "Admin overview", icon: Shield, exact: true },
   { href: "/admin/tenants", label: "Tenants", icon: Building2 },
   { href: "/admin/plans", label: "Plans", icon: Boxes },
+  { href: "/admin/models", label: "Models", icon: Cpu },
   { href: "/admin/subscriptions", label: "Subscriptions", icon: CreditCard },
   { href: "/admin/god-users", label: "God users", icon: UserPlus },
 ];

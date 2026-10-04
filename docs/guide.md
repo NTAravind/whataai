@@ -72,7 +72,7 @@ Your schema is a solid start. Additions/adjustments worth making before or short
 | **New:** `agent_tools` or `tool_registry` | `agent_id, tool_name, config jsonb, enabled` | Lets you turn tools (booking, KB search, escalate-to-human) on/off per agent without redeploying |
 | **New:** `bookings` (once appointment agent ships) | `tenant_id, contact_id, agent_id, starts_at, ends_at, status, metadata` | Appointment agent needs a first-class object, not something buried in `messages` |
 | **New:** `whatsapp_templates` | `tenant_id, wa_account_id, name, category, language, status, components jsonb, meta_template_id` | `/api/templates` needs a source of truth distinct from Meta's API, for caching + approval-status tracking |
-| `plans.limits` shape | Standardize keys now: `{ max_agents, max_wa_accounts, allowed_agent_types[], allowed_channels[], token_budget_monthly, model_tier }` | This JSONB *is* your entitlement engine — get the shape right early |
+| `plans.limits` shape | Standardize keys now: `{ max_agents, max_wa_accounts, allowed_agent_types[], allowed_channels[], token_budget_monthly, allowed_models[], default_model }` | This JSONB *is* your entitlement engine — get the shape right early |
 | RLS | Every tenant-scoped table needs an RLS policy keyed on `tenant_id = auth.jwt() -> tenant_id` (or a `tenant_members` join table) | Non-negotiable for multi-tenant Supabase; retrofit is painful |
  
 **One structural decision to make now:** add a `tenant_members` table (`user_id, tenant_id, role`) rather than assuming one Supabase user = one tenant. Even for MVP, you'll likely want a client to invite a teammate, and retrofitting this later touches every RLS policy.

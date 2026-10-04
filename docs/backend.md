@@ -29,7 +29,10 @@ Meta Cloud API (WhatsApp) · Resend (mail).
 **Providers:** every model — provider, id catalog, pricing, and SDK factories —
 is defined once in `lib/agents/provider.ts`, which drives BOTH the AI-SDK
 (`getAISDKModel`) and LangChain (`getLangChainModel`) paths. Switch providers
-(Google ⇄ Groq) and add/retire models in that one file; see §5.1.
+(Google ⇄ Groq ⇄ OpenRouter) and add/retire models in that one file; see §5.1.
+OpenRouter's catalog comes from `lib/openrouter-models.ts` (free/tool filters,
+per-token → per-1M pricing) and is merged into the shared catalog after
+Google/Groq, so an id both Groq and OpenRouter serve resolves to Groq.
 
 **Stack truth that matters:** this is a **jobs/event-driven backend wearing a
 Next.js coat**. Route handlers are thin HTTP fronts — the real work happens in
@@ -144,6 +147,7 @@ gitignored):
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | admin client (bypasses RLS) |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | for google | Google Gemini via `@ai-sdk/google` *and* LangChain's `ChatGoogleGenerativeAI`. Note: `@ai-sdk/google` reads this env var automatically, but LangChain does **not** — it is passed explicitly via `getLangChainModel()` in `lib/agents/provider.ts`. |
 | `GROQ_API_KEY` | for groq | Groq via `@ai-sdk/groq` *and* `ChatGroq` — used only if a model's provider is `groq` or `ACTIVE_PROVIDER` is switched in `lib/agents/provider.ts`. |
+| `OPENROUTER_API_KEY` | for openrouter | OpenRouter via `@openrouter/ai-sdk-provider` *and* `ChatOpenAICompletions` (base URL `https://openrouter.ai/api/v1`). Also authorizes the catalog fetch in `lib/openrouter-models.ts`; without it no OpenRouter models are discovered. |
 | `WHATSAPP_VERIFY_TOKEN` | for WA | webhook GET verification |
 | `META_APP_SECRET` | for WA | webhook signature validation |
 | `WHATSAPP_API_KEY` | for WA | Meta Graph API bearer token |
@@ -279,7 +283,7 @@ keeping Vercel AI SDK only for the dashboard chat streaming path (see
 
 | File | Role |
 |---|---|
-| `provider.ts` | **Single source of truth** for models, pricing, provider routing (`ACTIVE_PROVIDER`, `MODELS`, `PRICING`), and SDK factories (`getAISDKModel`, `getLangChainModel`). Both the AI-SDK and LangGraph paths derive from here. |
+| `provider.ts` | **Single source of truth** for models, pricing, provider routing (`ACTIVE_PROVIDER`, `MODELS`, `PRICING`), and SDK factories (`getAISDKModel`, `getLangChainModel`). Both the AI-SDK and LangGraph paths derive from here. Discovers Google, Groq and OpenRouter (via `lib/openrouter-models.ts`) and de-duplicates by model id, first provider wins. |
 | `runtime.ts` | Durable wrapper: builds the graph and invokes it inside **one** `step.run()`; extracts text / usage / diagnostics from the result via `graphMessageType`/`graphMessageContent`/`graphMessageUsage`. Exports `historyFromDb` to convert stored message rows into `ModelMessage[]`. |
 | `graph/state.ts` | The `AgentState` schema (messages reducer, `iteration`, `metadata`). |
 | `graph/nodes.ts` | `createAgentNode`, `createToolNode`, `createAutomationToolNode`, `createHitlToolNode`, `buildSystemPrompt`. System prompt includes a live datetime block and booking-specific instructions. Uses `getLangChainModel`. |
@@ -492,7 +496,8 @@ canonical shape is enforced by the Zod schema `planLimitsSchema` in
   "allowed_agent_types": ["receptionist"],
   "allowed_channels": ["whatsapp"],
   "token_budget_monthly": 100000,
-  "model_tier": "default",
+  "allowed_models": ["gemini-2.5-flash"],
+  "default_model": "gemini-2.5-flash",
   "enforcement": "hard"
 }
 ```
@@ -649,7 +654,8 @@ There is no test suite yet. Typecheck + lint are the verification gate.
 - **Models, providers, and pricing all live in one file.** `lib/agents/provider.ts`
   (`ACTIVE_PROVIDER`, `MODELS`, `PRICING`, `getAISDKModel`, `getLangChainModel`)
   is the only place SDK classes are constructed and per-model costs are resolved.
-  Don't build `ChatGoogleGenerativeAI`/`google()`/`createGroq()`/`ChatGroq`
+  Don't build `ChatGoogleGenerativeAI`/`google()`/`createGroq()`/`ChatGroq`/
+  `createOpenRouter()`/`ChatOpenAICompletions`
   anywhere else — call the `get*Model` helpers so the UI dropdowns, costs, and
   runtime all stay consistent. `lib/agents/pricing.ts` only re-exports `provider.ts`.
 - **The dashboard chat is not the inbox agent.** `tenant-runtime.ts` builds an
@@ -670,6 +676,9 @@ There is no test suite yet. Typecheck + lint are the verification gate.
   `getLangChainModel` in `provider.ts`, never inline in nodes/supervisor.
   `@ai-sdk/google` reads it automatically, which is why the old path worked.
   Same for Groq: `GROQ_API_KEY` is passed explicitly (only to Groq models).
+  OpenRouter is the same story — `OPENROUTER_API_KEY` and
+  `baseURL: https://openrouter.ai/api/v1` are passed to `ChatOpenAICompletions`
+  (completions API only; OpenRouter has no Responses API for most models).
 - **Inngest v4 checkpointing is on by default.** `lib/clients/ingest.ts` sets
   `checkpointing.maxRuntime: "50s"` and `/api/inngest` exports `maxDuration = 60`.
   If you raise the runtime cap, keep the two in sync. Step output is still

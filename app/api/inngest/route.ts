@@ -11,6 +11,7 @@ import { kbDocumentChunker } from "@/lib/inngest/functions/kb-chunk";
 import { bookingReminder } from "@/lib/inngest/functions/booking-reminder";
 import { bulkSendTemplate } from "@/lib/inngest/functions/bulk-send-template";
 import { automationRun } from "@/lib/inngest/functions/automation-run";
+import { modelCatalogSync } from "@/lib/inngest/functions/model-catalog-sync";
 
 export const maxDuration = 60;
 
@@ -28,5 +29,6 @@ export const { GET, POST, PUT } = serve({
     bookingReminder,
     bulkSendTemplate,
     automationRun,
+    modelCatalogSync,
   ],
 });

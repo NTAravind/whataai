@@ -1,6 +1,6 @@
 import { supabaseAdmin, unwrap } from "@/lib/clients/supabase";
 import { DEFAULT_AGENT_TOOLS } from "@/lib/agents/registry";
-import { resolveModelId } from "@/lib/agents/provider";
+import { resolveTenantModelId } from "@/lib/agents/model-access";
 
 export interface AgentRow {
   id: string;
@@ -36,11 +36,22 @@ export interface UpdateAgentInput {
   tools?: string[];
 }
 
-async function normalizeModelConfig(modelConfig?: Record<string, unknown>) {
-  return {
-    ...(modelConfig ?? {}),
-    model: await resolveModelId(modelConfig?.model),
-  };
+/**
+ * Gate a submitted model against what this tenant's plan actually grants.
+ *
+ * A model that was disabled in /admin/models or removed from the plan falls back
+ * to the tenant's default rather than failing the save, so an admin edit never
+ * strands an existing agent. A model the provider no longer serves still throws.
+ */
+async function normalizeModelConfig(
+  tenantId: string,
+  modelConfig?: Record<string, unknown>,
+) {
+  const resolved = await resolveTenantModelId(tenantId, modelConfig?.model);
+  if (resolved.fellBack) {
+    console.warn(`[agents] ${tenantId}: ${resolved.reason}`);
+  }
+  return { ...(modelConfig ?? {}), model: resolved.model };
 }
 
 /**
@@ -58,7 +69,7 @@ export async function createAgent(input: CreateAgentInput): Promise<AgentWithToo
       type: input.type,
       name: input.name,
       instructions: input.instructions ?? "",
-      model_config: await normalizeModelConfig(input.model_config) as unknown as Record<string, unknown>,
+      model_config: await normalizeModelConfig(input.tenantId, input.model_config) as unknown as Record<string, unknown>,
     })
     .select()
     .single();
@@ -112,7 +123,7 @@ export async function updateAgent(tenantId: string, agentId: string, input: Upda
   if (input.type !== undefined) patch.type = input.type;
   if (input.name !== undefined) patch.name = input.name;
   if (input.instructions !== undefined) patch.instructions = input.instructions;
-  if (input.model_config !== undefined) patch.model_config = await normalizeModelConfig(input.model_config);
+  if (input.model_config !== undefined) patch.model_config = await normalizeModelConfig(tenantId, input.model_config);
   if (input.enabled !== undefined) patch.enabled = input.enabled;
   if (Object.keys(patch).length) {
     const { error } = await admin.from("agents").update(patch).eq("id", agentId).eq("tenant_id", tenantId);

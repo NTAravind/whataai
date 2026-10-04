@@ -218,7 +218,8 @@ validates against the canonical shape (guide §3) — unknown keys are stripped.
     "allowed_agent_types": ["receptionist", "appointments"],
     "allowed_channels": ["whatsapp", "mail"],
     "token_budget_monthly": 500000,
-    "model_tier": "pro",
+    "allowed_models": ["gemini-2.5-flash", "gemini-2.5-pro"],
+    "default_model": "gemini-2.5-flash",
     "enforcement": "hard"
   }
 }

@@ -1,4 +1,6 @@
 import { supabaseAdmin } from "@/lib/clients/supabase";
+import { DEFAULT_MODEL } from "@/lib/agents/provider";
+import type { PlanLimits } from "@/lib/services/plans";
 
 /**
  * Entitlements resolution (docs/guide.md §4).
@@ -14,16 +16,27 @@ export interface Entitlements {
   allowedAgentTypes: string[];
   allowedChannels: string[];
   tokenBudgetMonthly: number;
-  model: string;
+  /**
+   * Model ids the tenant's plan grants, as written in plans.limits. Empty means
+   * the plan set no restriction. lib/agents/model-access.ts intersects this with
+   * the enabled catalog and falls back to defaultModel when needed.
+   */
+  allowedModels: string[];
+  /** The model a tenant falls back to when its selection is no longer granted. */
+  defaultModel: string;
   enforcement: "hard" | "soft";
 }
 
-const DEFAULTS = {
+/** A plan's limits once DEFAULTS have filled in every missing key. */
+type ResolvedLimits = Required<
+  Pick<PlanLimits, "max_agents" | "allowed_agent_types" | "allowed_channels" | "token_budget_monthly" | "enforcement">
+> & Pick<PlanLimits, "allowed_models" | "default_model">;
+
+const DEFAULTS: ResolvedLimits = {
   max_agents: 1,
   allowed_agent_types: ["receptionist"],
   allowed_channels: ["whatsapp"],
   token_budget_monthly: 100_000,
-  model_tier: "default",
   enforcement: "hard",
 };
 
@@ -44,7 +57,7 @@ export async function resolveEntitlements(tenantId: string): Promise<Entitlement
   const sub = subRes.data;
   const subErr = subRes.error;
 
-  let limits = DEFAULTS;
+  let limits: ResolvedLimits = DEFAULTS;
   let planId: string | null = null;
 
   if (!subErr && sub) {
@@ -54,20 +67,19 @@ export async function resolveEntitlements(tenantId: string): Promise<Entitlement
       .select("limits")
       .eq("id", sub.plan_id)
       .maybeSingle();
-    if (plan?.limits) limits = { ...DEFAULTS, ...plan.limits };
+    if (plan?.limits) limits = { ...DEFAULTS, ...plan.limits } as ResolvedLimits;
   }
-
-  const baseBudget = limits.token_budget_monthly ?? DEFAULTS.token_budget_monthly;
 
   return {
     tenantId,
     planId,
-    maxAgents: limits.max_agents ?? DEFAULTS.max_agents,
-    allowedAgentTypes: limits.allowed_agent_types ?? DEFAULTS.allowed_agent_types,
-    allowedChannels: limits.allowed_channels ?? DEFAULTS.allowed_channels,
-    tokenBudgetMonthly: baseBudget + topup,
-    model: limits.model_tier ?? DEFAULTS.model_tier,
-    enforcement: (limits.enforcement ?? DEFAULTS.enforcement) as Entitlements["enforcement"],
+    maxAgents: limits.max_agents,
+    allowedAgentTypes: limits.allowed_agent_types,
+    allowedChannels: limits.allowed_channels,
+    tokenBudgetMonthly: limits.token_budget_monthly + topup,
+    allowedModels: limits.allowed_models ?? [],
+    defaultModel: limits.default_model ?? DEFAULT_MODEL,
+    enforcement: limits.enforcement,
   };
 }
 
