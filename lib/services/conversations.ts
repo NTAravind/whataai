@@ -161,6 +161,26 @@ export async function listMessages(conversationId: string, limit = 100) {
   );
 }
 
+/**
+ * Fetch the most recent messages for a conversation in chronological (oldest → newest) order.
+ * This prevents dropping the newest user message when windowing (see historyFromDb).
+ */
+export async function listRecentMessages(conversationId: string, limit = 50) {
+  const admin = supabaseAdmin();
+  const { data, error } = await admin
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  // Return oldest → newest
+  return rows.slice().reverse();
+}
+
 export async function markConversationRead(conversationId: string) {
   await supabaseAdmin()
     .from("conversations")

@@ -3,6 +3,7 @@ import { AgentState } from "./state";
 import { createAgentNode, createAutomationToolNode, buildSystemPrompt } from "./nodes";
 import { buildLangChainTools } from "./tools";
 import { nextAfterTools, shouldContinue } from "./edges";
+import { resolveTenantTimezone } from "@/lib/services/tenants";
 import type { AgentToolCtx } from "@/lib/agents/registry";
 import { resolveModelId } from "../provider";
 
@@ -20,18 +21,21 @@ export async function buildAgentGraph(input: BuildGraphInput) {
   const modelName = await resolveModelId(input.agent.model_config?.model ?? process.env.AI_MODEL);
 
   const lcTools = await buildLangChainTools(input.agent.tools, input.ctx, input.agentId);
+  const tz = await resolveTenantTimezone(input.ctx.tenantId);
   const systemPrompt = await buildSystemPrompt(
     input.agent.instructions,
     input.ctx.tenantId,
     input.agent.tools,
+    tz,
   );
 
-  const agentNode = createAgentNode(modelName, systemPrompt, lcTools);
+  const agentNode = createAgentNode(modelName, systemPrompt, lcTools, input.agent.model_config);
   const toolNode = createAutomationToolNode(lcTools, input.agentId ?? "");
   const finalAgentNode = createAgentNode(
     modelName,
     `${systemPrompt}\n\nYou have completed the available tool actions. Give the customer a concise final response based on the conversation and tool results. Do not call any tools.`,
     [],
+    input.agent.model_config,
   );
 
   const graph = new StateGraph(AgentState)

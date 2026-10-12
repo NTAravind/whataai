@@ -14,9 +14,20 @@ function buildDateTimeBlock(timezone: string): string {
     timeStyle: "short",
     timeZone: timezone,
   }).format(now);
+  const isoDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: timezone,
+  }).format(now);
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    timeZone: timezone,
+  }).format(now);
 
   return `
 ## Current date & time
+Today's date: ${isoDate} (${weekday})
 Right now it is: ${nowFormatted} (${timezone})
 
 Rules for handling dates and times:
@@ -33,10 +44,12 @@ export async function buildSystemPrompt(
   agentInstructions: string,
   tenantId: string,
   enabledTools: string[],
+  timezone?: string,
 ): Promise<string> {
   const bizContext = await getBusinessContextPrompt(tenantId);
+  const tz = timezone ?? bizContext.timezone ?? "Asia/Kolkata";
   let systemPrompt = `${agentInstructions ?? ""}${bizContext.prompt}`;
-  systemPrompt += `\n\n${buildDateTimeBlock(bizContext.timezone)}`;
+  systemPrompt += `\n\n${buildDateTimeBlock(tz)}`;
 
   if (
     enabledTools.includes("check_availability") ||
@@ -58,8 +71,9 @@ export function createAgentNode(
   modelName: string,
   systemPrompt: string,
   lcTools: DynamicStructuredTool[],
+  modelConfig?: Record<string, unknown>,
 ) {
-  const model = getLangChainModel(modelName, 0.7);
+  const model = getLangChainModel(modelName, 0.7, modelConfig);
   const llm = lcTools.length > 0 ? model.bindTools(lcTools) : model;
 
   return async (state: typeof AgentState.State) => {

@@ -10,6 +10,8 @@ export interface TenantRow {
   updated_at: string;
   max_businesses: number | null;
   token_budget_topup: number;
+  settings?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 
@@ -298,4 +300,28 @@ export async function deleteTenant(id: string): Promise<void> {
   if (failures.length > 0) {
     throw new HttpError(500, `Tenant delete incomplete: ${failures.join("; ")}`);
   }
+}
+
+export async function resolveTenantTimezone(tenantId: string): Promise<string> {
+  const admin = supabaseAdmin();
+  const { data: tenant } = await admin
+    .from("tenants")
+    .select("settings")
+    .eq("id", tenantId)
+    .maybeSingle();
+  const settings = (tenant?.settings ?? {}) as Record<string, unknown>;
+  const tz = (settings?.timezone as string | undefined) ?? undefined;
+
+  if (tz && typeof tz === "string") return tz;
+
+  const { data: businesses } = await admin
+    .from("businesses")
+    .select("timezone")
+    .eq("tenant_id", tenantId)
+    .limit(1)
+    .maybeSingle();
+  const bizTz = businesses?.timezone as string | undefined;
+  if (bizTz && bizTz !== "UTC") return bizTz;
+
+  return "Asia/Kolkata";
 }

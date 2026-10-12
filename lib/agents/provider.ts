@@ -578,7 +578,7 @@ export function getAISDKModel(modelId?: string | null) {
  * `ChatOpenAICompletions` (never the Responses API) pointed at OpenRouter's
  * base URL — tool calling is the one thing the inbound pipeline depends on.
  */
-export function getLangChainModel(modelId?: string | null, temperature = 0.7) {
+export function getLangChainModel(modelId?: string | null, temperature = 0.7, modelConfig?: Record<string, unknown>) {
   const id = modelId ?? DEFAULT_MODEL;
   if (!modelOption(id)) throw new Error(`Unsupported model: ${id}`);
   switch (providerOfModel(id)) {
@@ -596,10 +596,21 @@ export function getLangChainModel(modelId?: string | null, temperature = 0.7) {
       });
     case "google":
     default:
+      const mcfg = (modelConfig as any) || ({} as any);
+      const thinking = (mcfg?.thinking as any) || (mcfg?.thinkingConfig as any) || {};
+      const thinkingParams: any = {};
+      if (thinking.budget !== undefined && thinking.budget >= 0) {
+        thinkingParams.thinkingBudget = thinking.budget;
+      }
+      if (thinking.level) {
+        thinkingParams.thinkingLevel = thinking.level;
+      }
       return new ChatGoogleGenerativeAI({
         model: id,
         temperature,
         apiKey: GOOGLE_API_KEY,
+        maxOutputTokens: mcfg?.maxTokens ?? mcfg?.max_output_tokens,
+        thinkingConfig: Object.keys(thinkingParams).length ? thinkingParams : undefined,
       });
   }
 }

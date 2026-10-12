@@ -6,6 +6,7 @@ import { buildLangChainTools } from "./tools";
 import { nextAfterTools, shouldContinue } from "./edges";
 import type { AgentToolCtx } from "@/lib/agents/registry";
 import { getLangChainModel, resolveModelId } from "../provider";
+import { resolveTenantTimezone } from "@/lib/services/tenants";
 
 const SupervisorState = Annotation.Root({
   ...AgentState.spec,
@@ -39,8 +40,8 @@ Use escalate_to_human immediately with a clear reason.`,
   },
 };
 
-function createSupervisorNode(modelName: string) {
-  const llm = getLangChainModel(modelName, 0);
+function createSupervisorNode(modelName: string, modelConfig?: Record<string, unknown>) {
+  const llm = getLangChainModel(modelName, 0, modelConfig);
 
   return async (state: typeof SupervisorState.State) => {
     const lastMessage = state.messages[state.messages.length - 1];
@@ -75,7 +76,7 @@ export async function buildSupervisorGraph(input: {
   ctx: AgentToolCtx;
 }) {
   const modelName = await resolveModelId(input.model_config?.model ?? process.env.AI_MODEL);
-  const supervisorNode = createSupervisorNode(modelName);
+  const supervisorNode = createSupervisorNode(modelName, input.model_config);
 
   const subAgentNodes: Record<string, ReturnType<typeof createAgentNode>> = {};
   const subAgentToolNodes: Record<string, ReturnType<typeof createAutomationToolNode>> = {};
@@ -84,22 +85,26 @@ export async function buildSupervisorGraph(input: {
   for (const [category, config] of Object.entries(ROUTE_MAP)) {
     const agentTools = config.tools.filter((t) => input.enabledTools.includes(t));
     const lcTools = await buildLangChainTools(agentTools, input.ctx, input.agentId);
+    const tz = await resolveTenantTimezone(input.ctx.tenantId);
     const systemPrompt = await buildSystemPrompt(
       `${input.instructions}\n\n${config.prompt}`,
       input.ctx.tenantId,
       agentTools,
+      tz,
     );
 
     subAgentNodes[category] = createAgentNode(
       modelName,
       systemPrompt,
       lcTools,
+      input.model_config,
     );
     subAgentToolNodes[category] = createAutomationToolNode(lcTools, input.agentId);
     finalAgentNodes[category] = createAgentNode(
       modelName,
       `${systemPrompt}\n\nYou have completed the available tool actions. Give the customer a concise final response based on the conversation and tool results. Do not call any tools.`,
       [],
+      input.model_config,
     );
   }
 

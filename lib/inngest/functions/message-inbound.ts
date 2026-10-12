@@ -1,11 +1,13 @@
 import { inngest } from "@/lib/clients/ingest";
 import { messageInbound } from "@/lib/inngest/events";
 import { supabaseAdmin } from "@/lib/clients/supabase";
-import { loadConversationContext, listMessages, pickAgentForConversation } from "@/lib/services/conversations";
+import { loadConversationContext, listMessages, listRecentMessages, pickAgentForConversation } from "@/lib/services/conversations";
 import { runDurableAgent, historyFromDb } from "@/lib/agents/runtime";
 import { resolveEntitlements, hasTokenBudget } from "@/lib/entitlements/resolve";
 import { enqueueOutboundMessage } from "@/lib/services/messages";
 import { emitAfterAgentReply } from "@/lib/automations/trigger";
+import { loadBookingContext, saveBookingContext } from "@/lib/agents/booking-context";
+import { isGreeting } from "@/lib/agents/greeting";
 
 /**
  * Core orchestration function (docs/guide.md §7 — `message.inbound`).
@@ -24,6 +26,10 @@ export const messageInboundFunction = inngest.createFunction(
     name: "Message Inbound Orchestration",
     triggers: [messageInbound],
     idempotency: "event.data.providerMessageId",
+    concurrency: {
+      key: "event.data.conversationId",
+      limit: 1,
+    },
     retries: 3,
   },
   async ({ event, step, logger }) => {
@@ -59,11 +65,20 @@ export const messageInboundFunction = inngest.createFunction(
 
     const ctx = await step.run("load-context", async () => {
       const conversationContext = await loadConversationContext(d.conversationId);
-      const messages = await listMessages(d.conversationId, 50);
-      return { conversationContext, history: historyFromDb(messages) };
+      const messages = await listRecentMessages(d.conversationId, 50);
+      const history = historyFromDb(messages as any);
+      const latestUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
+      let latestUserText = "";
+      const c = latestUserMsg?.content;
+      if (typeof c === "string") latestUserText = c;
+      else if (c && typeof c === "object") latestUserText = (c as any).text ?? "";
+      latestUserText = latestUserText || (typeof d.content?.text === "string" ? d.content.text : "");
+      const latestUserMessage = latestUserText;
+      const bookingContext = await loadBookingContext(d.conversationId);
+      return { conversationContext, history, latestUserMessage, bookingContext };
     });
 
-    let agent = ctx.conversationContext.agent;
+    let agent = (ctx as any).conversationContext.agent;
     if (!agent) {
       agent = (await step.run("assign-fallback-agent", async () => {
         const fallback = await pickAgentForConversation({
@@ -88,6 +103,26 @@ export const messageInboundFunction = inngest.createFunction(
       return { skipped: true, reason: "no_agent" };
     }
 
+    // Greeting guard: if this is just a greeting and no history, respond politely and skip agent
+    if ((ctx as any).history?.length === 0 && isGreeting((ctx as any).latestUserMessage ?? "")) {
+      await step.run("send-greeting", async () => {
+        await enqueueOutboundMessage({
+          tenantId: d.tenantId,
+          channel: d.channel,
+          channelAccountId: d.channelAccountId,
+          conversationId: d.conversationId,
+          contactId: d.contactId,
+          senderId: d.senderId,
+          content: {
+            type: "text",
+            text: "Hi! How can I help you today?",
+          },
+          agentId: agent.id,
+        });
+      });
+      return { skipped: true, reason: "greeting" };
+    }
+
     let result: Awaited<ReturnType<typeof runDurableAgent>>;
     try {
       result = await runDurableAgent({
@@ -103,9 +138,9 @@ export const messageInboundFunction = inngest.createFunction(
           tenantId: d.tenantId,
           conversationId: d.conversationId,
           contactId: d.contactId,
-          customerName: ctx.conversationContext.contact.full_name,
+          customerName: (ctx as any).conversationContext.contact.full_name,
         },
-        history: ctx.history as Awaited<ReturnType<typeof historyFromDb>>,
+        history: (ctx as any).history as Awaited<ReturnType<typeof historyFromDb>>,
         step,
         logger: {
           warn: (message, data) => logger.warn(message, data),

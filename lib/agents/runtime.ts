@@ -46,7 +46,7 @@ type GraphMessage = {
   tool_calls?: unknown[];
   type?: string;
   /** The last segment of this array is the class name, e.g. "AIMessage" */
-  id?: string[];
+  id?: string | string[];
   _getType?: () => string;
   usage_metadata?: { input_tokens?: number; inputTokens?: number; output_tokens?: number; outputTokens?: number };
   response_metadata?: {
@@ -163,7 +163,7 @@ export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunRes
           modelName,
         },
       },
-      { configurable: { thread_id: input.ctx.conversationId } },
+      { configurable: {} },
     );
 
     return result;
@@ -186,8 +186,18 @@ export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunRes
 
   const iterations = raw.iteration ?? 1;
 
-  const inputMessageCount = inputMessages.length;
-  const generatedThisTurn = raw.messages.slice(inputMessageCount);
+  function messageId(m: GraphMessage): string | undefined {
+    if ((m as any).id) {
+      const idv = (m as any).id;
+      if (Array.isArray(idv)) return String(idv[idv.length - 1] ?? idv[0]);
+      return String(idv);
+    }
+    if ((m as any).kwargs?.id) return String((m as any).kwargs.id);
+    if ((m as any).lc_kwargs?.id) return String((m as any).lc_kwargs.id);
+    return undefined;
+  }
+
+  const generatedThisTurn = selectGeneratedMessages(raw.messages, inputMessages);
   const assistantMessages = generatedThisTurn.filter((message) => graphMessageType(message) === "ai");
   const text = assistantMessages
     .map((message) => extractText(graphMessageContent(message)).trim())
@@ -237,11 +247,20 @@ export async function runDurableAgent(input: AgentRunInput): Promise<AgentRunRes
   };
 }
 
-export function historyFromDb(rows: { role: string; content: unknown }[]): ModelMessage[] {
+export function historyFromDb(
+  rows: { id?: string; role: string; content: unknown }[],
+): ModelMessage[] {
   const out: ModelMessage[] = [];
+  const seen = new Set<string>();
 
   for (const row of rows) {
     const content = (row.content ?? {}) as { type?: string; text?: string; meta?: Record<string, unknown> };
+    const id = (row as any)?.id ? String((row as any).id) : undefined;
+    if (id && seen.has(id)) {
+      continue; // dedupe
+    }
+    if (id) seen.add(id);
+
     if (row.role === "user") {
       out.push({ role: "user", content: content.text ?? "" });
     } else if (row.role === "assistant") {
@@ -260,4 +279,13 @@ export function historyFromDb(rows: { role: string; content: unknown }[]): Model
   }
 
   return windowed;
+}
+
+function selectGeneratedMessages(all: GraphMessage[], input: any[]): GraphMessage[] {
+  const inputCount = input?.length ?? 0;
+  if (!all?.length || inputCount === 0) return all ?? [];
+  if (all.length >= inputCount) {
+    return all.slice(inputCount);
+  }
+  return all;
 }
